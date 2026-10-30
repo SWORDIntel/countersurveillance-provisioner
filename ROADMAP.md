@@ -28,6 +28,6 @@
   - [x] Direct append to authoritative QIHSE event store (`/opt/qihse-data/events/countersurveillance_alerts.jsonl`)
   - [x] Non-blocking UDP dispatch to Citadel Shield (`192.168.1.91:17872`) triggering real-time KEYSTONE trigram indexing
 
-- [ ] **Phase 6: Fleet Rollout**
-  - [ ] Deploy hardened local-daemon to `730xd` (192.168.1.90) via `deploy.sh remote`
-  - [ ] Deploy hardened local-daemon to `T320` (192.168.1.95) via `deploy.sh remote`
+- [x] **Phase 6: Fleet Rollout**
+  - [x] Deploy hardened local-daemon to `730xd` (192.168.1.90) via `deploy.sh remote`
+  - [x] Deploy hardened local-daemon to `T320` (192.168.1.95) via `deploy.sh remote`

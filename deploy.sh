@@ -174,6 +174,7 @@ deploy_remote() {
     ssh "${TARGET}" bash -s << EOF
 set -euo pipefail
 cd /tmp/cs-provisioner
+chmod +x deploy.sh verify.sh uninstall.sh tools/*.sh tools/*.py honeypot/bin/* 2>/dev/null || true
 
 echo "[*] Remote preflight syntax validation..."
 sudo -n nft -c -f configs/countersurveillance.nft
@@ -187,7 +188,7 @@ fi
 # Arm 30-second Watchdog
 WATCHDOG_PID=""
 if [ -f "\${BACKUP_FILE}" ]; then
-    (sleep 30 && sudo -n nft -f "\${BACKUP_FILE}" 2>/dev/null && echo "[!] Remote watchdog restored previous firewall state.") &
+    (sleep 30 && sudo -n nft -f "\${BACKUP_FILE}" 2>/dev/null && echo "[!] Remote watchdog restored previous firewall state.") >/dev/null 2>&1 &
     WATCHDOG_PID=\$!
 fi
 
