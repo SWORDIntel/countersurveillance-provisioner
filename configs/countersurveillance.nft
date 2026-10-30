@@ -169,6 +169,9 @@ table inet countersurveillance {
     chain prerouting {
         type nat hook prerouting priority dstnat; policy accept;
 
+        # Exempt loopback from redirection
+        iifname "lo" accept
+
         # Steer trapped scanner IPs hitting web decoys -> local ChronoSink HTTP
         ip saddr @dynamic_scanners_v4 tcp dport { 80, 8080, 8443 } redirect to :9080
         ip6 saddr @dynamic_scanners_v6 tcp dport { 80, 8080, 8443 } redirect to :9080
@@ -183,6 +186,9 @@ table inet countersurveillance {
     # --------------------------------------------------------------------------
     chain input {
         type filter hook input priority -5; policy accept;
+
+        # Loopback traffic is trusted unconditionally
+        iifname "lo" accept
 
         # A. Anti-Reconnaissance: Drop abnormal/manipulated TCP flags
         ct state invalid counter drop
@@ -203,8 +209,9 @@ table inet countersurveillance {
         ip6 saddr @blocked_v6 counter drop
 
         # E. Decoy Port Traps: Auto-jail external probes into dynamic sets
-        tcp dport { 23, 445, 5555, 8291 } add @dynamic_scanners_v4 { ip saddr } counter drop
-        tcp dport { 23, 445, 5555, 8291 } add @dynamic_scanners_v6 { ip6 saddr } counter drop
+        # Excludes loopback and authorized management subnets from self-jailing
+        iifname != "lo" ip saddr != @trusted_mgmt_v4 tcp dport { 23, 445, 5555, 8291 } add @dynamic_scanners_v4 { ip saddr } counter drop
+        iifname != "lo" ip6 saddr != @trusted_mgmt_v6 tcp dport { 23, 445, 5555, 8291 } add @dynamic_scanners_v6 { ip6 saddr } counter drop
 
         # F. Management Perimeter Stealth:
         # Strictly require source to be in @trusted_mgmt for sensitive daemons:
@@ -225,6 +232,10 @@ table inet countersurveillance {
     # --------------------------------------------------------------------------
     chain output {
         type filter hook output priority -5; policy accept;
+
+        # Loopback traffic is trusted unconditionally
+        oifname "lo" accept
+
         ct state established,related accept
 
         # Whitelist critical developer & management egress
