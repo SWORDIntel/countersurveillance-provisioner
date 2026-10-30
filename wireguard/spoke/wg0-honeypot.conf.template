@@ -1,0 +1,12 @@
+# ChronoSink WireGuard Spoke Configuration Template
+# Deployed on cluster nodes (T320, 730xd, T420)
+
+[Interface]
+Address = {{SPOKE_WG_IP}}/24
+PrivateKey = {{SPOKE_PRIVATE_KEY}}
+
+[Peer]
+PublicKey = {{HUB_PUBLIC_KEY}}
+Endpoint = {{HUB_ENDPOINT}}:51820
+AllowedIPs = 10.200.0.1/32
+PersistentKeepalive = 25

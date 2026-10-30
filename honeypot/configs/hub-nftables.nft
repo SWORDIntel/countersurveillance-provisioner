@@ -1,0 +1,21 @@
+#!/usr/sbin/nft -f
+# Hub-side Counter-Fingerprinting & Deception Mangle Table
+
+table inet chronosink_mangle {
+    chain output {
+        type filter hook output priority mangle; policy accept;
+
+        # Force Windows NT/2000 initial TTL (128) on all deception ports
+        # to contradict Apache/Unix HTTP banner and blind scanner OS heuristics
+        tcp sport { 80, 8080, 8443, 9080, 23, 445, 5555, 8291, 9445 } ip ttl set 128
+        tcp sport { 80, 8080, 8443, 9080, 23, 445, 5555, 8291, 9445 } ip6 hoplimit set 128
+    }
+
+    chain prerouting {
+        type nat hook prerouting priority dstnat; policy accept;
+
+        # In case spokes DNAT to standard ports, map them to chronosink's internal ports
+        tcp dport { 80, 8080, 8443 } redirect to :9080
+        tcp dport { 23, 445, 5555, 8291 } redirect to :9445
+    }
+}

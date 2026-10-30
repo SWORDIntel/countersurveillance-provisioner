@@ -1,0 +1,17 @@
+# Environment secrets
+provisioner.env
+*.env.local
+
+# Temporary and backup files
+*.bak*
+*.uninstalled*
+*.tmp
+*.swp
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# OS files
+.DS_Store
+Thumbs.db
