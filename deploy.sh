@@ -88,7 +88,8 @@ deploy_filter() {
 deploy_local_daemon() {
     echo -e "\n${CY}=== Deploying ChronoSink Go Daemon on Local PC ===${NC}"
 
-    sudo mkdir -p /opt/chronosink /var/log/chronosink /etc/chronosink
+    sudo mkdir -p /opt/chronosink /var/log/chronosink /etc/chronosink /opt/qihse-data/events
+    sudo chmod 777 /opt/qihse-data/events 2>/dev/null || true
     ARCH=$(uname -m)
     BIN_SOURCE="${SCRIPT_DIR}/honeypot/bin/chronosink-linux-amd64"
     if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
