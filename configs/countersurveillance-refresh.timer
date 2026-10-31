@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily counter-surveillance egress whitelist refresh
+
+[Timer]
+OnCalendar=*-*-* 04:17:00
+RandomizedDelaySec=3600
+Persistent=true
+Unit=countersurveillance-refresh.service
+
+[Install]
+WantedBy=timers.target

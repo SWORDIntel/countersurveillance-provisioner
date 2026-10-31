@@ -1,0 +1,19 @@
+[Unit]
+Description=Counter-surveillance egress whitelist refresh
+Documentation=file:///opt/countersurveillance/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/countersurveillance
+# The node's egress mode is written by `deploy.sh filter` at deploy time.
+# This file is intentionally mandatory (no "-" prefix): if it is missing the
+# unit must fail loudly rather than silently downgrade a strict node to accept.
+EnvironmentFile=/etc/countersurveillance/egress.mode
+ExecStart=/opt/countersurveillance/deploy.sh filter
+# deploy.sh preflights, arms a rollback watchdog and reverts on verification
+# failure; update_blacklist.py refuses to emit a thin whitelist if DNS is down.
+# A bad refresh therefore leaves the live table untouched.
+TimeoutStartSec=180
+Nice=10

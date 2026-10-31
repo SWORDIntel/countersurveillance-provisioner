@@ -27,6 +27,7 @@ NC='\033[0m'
 usage() {
     echo -e "${CY}Usage:${NC}"
     echo "  $0 filter                      # Deploy packet filter & anti-recon rules (with rollback watchdog)"
+    echo "  $0 install-refresh             # Install suite to /opt + daily egress whitelist refresh timer"
     echo "  $0 local-daemon                # Deploy Go ChronoSink daemon locally on this PC"
     echo "  $0 local-container             # Deploy ChronoSink inside local Docker/Podman container"
     echo "  $0 spoke-tunnel <sink_ip> [pubkey] # Connect to remote sink hub over WireGuard"
@@ -46,10 +47,15 @@ deploy_filter() {
     sudo mkdir -p /etc/nftables.d
     BACKUP_FILE="/etc/nftables.d/countersurveillance.nft.bak.$(date +%Y%m%d%H%M%S)"
 
-    # Backup existing table if active
+    # Backup existing table if active.
+    # The dump must start with a table reset: replaying a bare dump onto a live
+    # table only appends rules, it does not restore the previous state.
     if sudo nft list table inet countersurveillance >/dev/null 2>&1; then
         echo "[*] Backing up existing table to ${BACKUP_FILE}..."
-        sudo nft list table inet countersurveillance | sudo tee "${BACKUP_FILE}" >/dev/null
+        {
+            printf 'table inet countersurveillance\ndelete table inet countersurveillance\n'
+            sudo nft list table inet countersurveillance
+        } | sudo tee "${BACKUP_FILE}" >/dev/null
     fi
 
     # Arm Rollback Watchdog (reverts in 25s if verification fails)
@@ -72,7 +78,16 @@ deploy_filter() {
         if [ -n "$WATCHDOG_PID" ]; then
             kill "$WATCHDOG_PID" 2>/dev/null || true
         fi
+        # Record the node's egress mode so the refresh timer redeploys with the
+        # same policy instead of silently downgrading a strict node to accept.
+        sudo mkdir -p /etc/countersurveillance
+        if [ "${STRICT_EGRESS:-0}" = "1" ]; then
+            printf 'STRICT_EGRESS=1\n' | sudo tee /etc/countersurveillance/egress.mode >/dev/null
+        else
+            printf 'STRICT_EGRESS=0\n' | sudo tee /etc/countersurveillance/egress.mode >/dev/null
+        fi
         echo -e "${G}[+] Deployment verified. Rollback watchdog disarmed.${NC}"
+        echo "[+] Egress mode recorded: $(sudo cat /etc/countersurveillance/egress.mode)"
     else
         echo -e "${R}[-] Verification failed! Reverting ruleset immediately...${NC}"
         if [ -f "${BACKUP_FILE}" ]; then
@@ -83,6 +98,37 @@ deploy_filter() {
         fi
         exit 1
     fi
+}
+
+deploy_refresh_units() {
+    echo -e "\n${CY}=== Installing Egress Whitelist Refresh Timer ===${NC}"
+    INSTALL_DIR="/opt/countersurveillance"
+
+    sudo mkdir -p "${INSTALL_DIR}"
+    sudo rsync -a --delete \
+        --exclude '.git' --exclude 'honeypot/bin' \
+        "${SCRIPT_DIR}/" "${INSTALL_DIR}/"
+
+    sudo mkdir -p /etc/countersurveillance
+    if [ ! -f /etc/countersurveillance/egress.mode ]; then
+        # Derive the mode from the ruleset actually installed, so a node already
+        # running strict is never silently downgraded to accept by the refresh.
+        if sudo grep -qE 'hook (output|forward).*policy drop' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
+            printf 'STRICT_EGRESS=1\n' | sudo tee /etc/countersurveillance/egress.mode >/dev/null
+            echo "[*] Detected strict egress in the installed ruleset; recording STRICT_EGRESS=1."
+        else
+            printf 'STRICT_EGRESS=0\n' | sudo tee /etc/countersurveillance/egress.mode >/dev/null
+            echo "[*] Installed ruleset uses accept policy; recording STRICT_EGRESS=0."
+        fi
+    fi
+
+    sudo install -m 0644 "${SCRIPT_DIR}/configs/countersurveillance-refresh.service" /etc/systemd/system/
+    sudo install -m 0644 "${SCRIPT_DIR}/configs/countersurveillance-refresh.timer" /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now countersurveillance-refresh.timer
+
+    echo -e "${G}[+] Refresh timer installed (mode: $(sudo cat /etc/countersurveillance/egress.mode))${NC}"
+    systemctl list-timers countersurveillance-refresh.timer --no-pager || true
 }
 
 deploy_local_daemon() {
@@ -180,10 +226,13 @@ chmod +x deploy.sh verify.sh uninstall.sh tools/*.sh tools/*.py honeypot/bin/* 2
 echo "[*] Remote preflight syntax validation..."
 sudo -n nft -c -f configs/countersurveillance.nft
 
-# Backup existing table
+# Backup existing table (delete-prefixed so replay restores rather than merges)
 BACKUP_FILE="/tmp/cs_remote_rollback.nft"
 if sudo -n nft list table inet countersurveillance >/dev/null 2>&1; then
-    sudo -n nft list table inet countersurveillance > "\${BACKUP_FILE}"
+    {
+        printf 'table inet countersurveillance\ndelete table inet countersurveillance\n'
+        sudo -n nft list table inet countersurveillance
+    } | sudo -n tee "\${BACKUP_FILE}" >/dev/null
 fi
 
 # Arm 30-second Watchdog
@@ -216,6 +265,9 @@ fi
 case "$1" in
     filter)
         deploy_filter
+        ;;
+    install-refresh)
+        deploy_refresh_units
         ;;
     local|local-daemon)
         deploy_local_daemon

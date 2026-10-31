@@ -12,11 +12,17 @@ Implements:
 import ipaddress
 import json
 import os
+import socket
 import sys
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JSON_PATH = os.path.join(BASE_DIR, "data", "scanner_subnets.json")
+DOMAINS_PATH = os.path.join(BASE_DIR, "data", "egress_domains.json")
 OUTPUT_NFT = os.path.join(BASE_DIR, "configs", "countersurveillance.nft")
+
+# Refuse to emit a ruleset if the domain list resolves too thinly: under
+# STRICT_EGRESS an incomplete whitelist is a self-inflicted egress outage.
+MIN_RESOLVE_RATIO = 0.8
 
 # 1. Authorised Management Sources (RFC1918, Loopback, Carrier CGNAT/Tailscale)
 TRUSTED_MGMT_V4 = [
@@ -45,7 +51,13 @@ ESSENTIAL_EGRESS_V4 = [
     # Fastly CDN (PyPI / pythonhosted.org / Debian / Rust cargo)
     "151.101.0.0/16", "199.232.0.0/16",
     # Ubuntu / Canonical Repositories
-    "91.189.88.0/21", "185.125.188.0/22"
+    "91.189.88.0/21", "185.125.188.0/22",
+    # parrot-sabot protected engagement egress: Rayobyte proxy exit and the
+    # dedicated parrot0 bridge subnet used by engagement containers
+    "144.126.248.239/32", "172.18.0.0/16",
+    # Chrony upstream time sources (time1/time2.panq.nl, leontp2.office.panq.nl)
+    # Required only under STRICT_EGRESS; harmless while the policy is accept.
+    "185.51.192.61/32", "185.51.192.62/32", "45.138.55.61/32"
 ]
 
 ESSENTIAL_EGRESS_V6 = [
@@ -54,6 +66,35 @@ ESSENTIAL_EGRESS_V6 = [
     "2606:4700:4700::1111/128", "2606:4700:4700::1001/128",
     "2620:fe::fe/128", "2620:fe::9/128"
 ]
+
+# Strict egress enforcement (opt-in, per node, staged rollout).
+# When enabled the output and forward chains default-deny instead of
+# default-accept, so @essential_egress and @trusted_mgmt become a real
+# whitelist. The input chain is unaffected: management isolation is enforced
+# by its explicit rules, and flipping it to drop would not add protection.
+STRICT_EGRESS = os.environ.get("STRICT_EGRESS", "0") == "1"
+
+
+def resolve_domains(names, family):
+    """Resolve hostnames to concrete addresses for the egress whitelist."""
+    found, failed = [], []
+    for name in names:
+        try:
+            infos = socket.getaddrinfo(name, None, family)
+        except (socket.gaierror, UnicodeError) as exc:
+            failed.append((name, exc))
+            continue
+        for info in infos:
+            found.append(info[4][0])
+    return sorted(set(found)), failed
+
+
+def load_egress_domains():
+    if not os.path.exists(DOMAINS_PATH):
+        return [], []
+    with open(DOMAINS_PATH) as f:
+        data = json.load(f)
+    return list(data.get("required", [])), list(data.get("optional", []))
 
 
 def collapse_and_clean(net_strings, ip_cls):
@@ -83,13 +124,34 @@ def main():
 
     trusted_v4_clean = collapse_and_clean(TRUSTED_MGMT_V4, ipaddress.ip_network)
     trusted_v6_clean = collapse_and_clean(TRUSTED_MGMT_V6, ipaddress.ip_network)
-    egress_v4_clean = collapse_and_clean(ESSENTIAL_EGRESS_V4, ipaddress.ip_network)
-    egress_v6_clean = collapse_and_clean(ESSENTIAL_EGRESS_V6, ipaddress.ip_network)
+
+    # Merge DNS-resolved host addresses into the static egress whitelist so
+    # vendor CDN moves do not break strict egress.
+    required, optional = load_egress_domains()
+    resolved_v4, failed_v4 = resolve_domains(required + optional, socket.AF_INET)
+    resolved_v6, failed_v6 = resolve_domains(required + optional, socket.AF_INET6)
+    required_failed = [n for n, _ in failed_v4 if n in required]
+    for name in required_failed:
+        print(f"[!] WARNING: required egress domain did not resolve: {name}", file=sys.stderr)
+    total_required = len(required)
+    if total_required and (total_required - len(required_failed)) / total_required < MIN_RESOLVE_RATIO:
+        print(
+            f"[!] SAFETY ERROR: only {total_required - len(required_failed)}/{total_required} "
+            "required egress domains resolved; refusing to emit a thin whitelist.",
+            file=sys.stderr,
+        )
+        sys.exit(3)
+
+    egress_v4_source = ESSENTIAL_EGRESS_V4 + [f"{ip}/32" for ip in resolved_v4]
+    egress_v6_source = ESSENTIAL_EGRESS_V6 + [f"{ip}/128" for ip in resolved_v6]
+
+    egress_v4_clean = collapse_and_clean(egress_v4_source, ipaddress.ip_network)
+    egress_v6_clean = collapse_and_clean(egress_v6_source, ipaddress.ip_network)
     blocked_v4_clean = collapse_and_clean(raw_blocked_v4, ipaddress.ip_network)
     blocked_v6_clean = collapse_and_clean(raw_blocked_v6, ipaddress.ip_network)
 
     # Sanity checks: Ensure no blocked range overlaps essential egress or management
-    protected_v4 = [ipaddress.ip_network(n) for n in TRUSTED_MGMT_V4 + ESSENTIAL_EGRESS_V4]
+    protected_v4 = [ipaddress.ip_network(n) for n in TRUSTED_MGMT_V4 + egress_v4_source]
     for b in blocked_v4_clean:
         b_obj = ipaddress.ip_network(b)
         for p in protected_v4:
@@ -98,11 +160,16 @@ def main():
                 sys.exit(2)
 
     print(f"[+] Management Whitelist: {len(trusted_v4_clean)} v4, {len(trusted_v6_clean)} v6")
-    print(f"[+] Essential Egress:     {len(egress_v4_clean)} v4, {len(egress_v6_clean)} v6")
+    print(f"[+] Essential Egress:     {len(egress_v4_clean)} v4, {len(egress_v6_clean)} v6 "
+          f"({len(resolved_v4)} v4/{len(resolved_v6)} v6 from {len(required) + len(optional)} domains)")
     print(f"[+] Collapsed Blocklist:  {len(blocked_v4_clean)} v4, {len(blocked_v6_clean)} v6")
+    print(f"[+] Output/Forward Policy: {'DROP (strict)' if STRICT_EGRESS else 'ACCEPT (whitelist advisory)'}")
+
+    egress_policy = "drop" if STRICT_EGRESS else "accept"
 
     nft_template = f"""# Counter-Surveillance & Anti-Reconnaissance Packet Filter
 # Generated by update_blacklist.py
+# Output/Forward policy: {egress_policy}{"  # STRICT_EGRESS=1" if STRICT_EGRESS else ""}
 # DO NOT EDIT DIRECTLY: Update data/scanner_subnets.json and re-run tools/update_blacklist.py.
 
 # Idempotent Atomic Table Reset
@@ -250,7 +317,7 @@ table inet countersurveillance {{
     # OUTPUT: Egress Protection
     # --------------------------------------------------------------------------
     chain output {{
-        type filter hook output priority -5; policy accept;
+        type filter hook output priority -5; policy {egress_policy};
 
         # Loopback traffic is trusted unconditionally
         oifname "lo" accept
@@ -274,7 +341,7 @@ table inet countersurveillance {{
     # FORWARD: Transit Protection (Containers / VMs / Bridges)
     # --------------------------------------------------------------------------
     chain forward {{
-        type filter hook forward priority -5; policy accept;
+        type filter hook forward priority -5; policy {egress_policy};
         ct state established,related accept
 
         ip daddr @essential_egress_v4 accept

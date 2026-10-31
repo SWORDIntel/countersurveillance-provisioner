@@ -1,0 +1,26 @@
+{
+  "comment": "Domains the fleet must reach. Resolved at ruleset generation time and merged into @essential_egress_v4/v6, so vendor CDN moves (e.g. github.com moving to 20.26.x) do not silently break egress under STRICT_EGRESS.",
+  "required": [
+    "github.com",
+    "api.github.com",
+    "codeload.github.com",
+    "objects.githubusercontent.com",
+    "raw.githubusercontent.com",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "deb.debian.org",
+    "security.debian.org",
+    "registry-1.docker.io",
+    "production.cloudflare.docker.com",
+    "ghcr.io",
+    "pkg-containers.githubusercontent.com",
+    "time1.panq.nl",
+    "time2.panq.nl",
+    "leontp2.office.panq.nl"
+  ],
+  "optional": [
+    "archive.ubuntu.com",
+    "packages.microsoft.com",
+    "dl.google.com"
+  ]
+}

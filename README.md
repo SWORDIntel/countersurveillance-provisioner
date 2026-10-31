@@ -139,7 +139,7 @@ Every probe captured by ChronoSink is logged to `/var/log/chronosink/probes.json
 ```bash
 ./deploy.sh filter
 ```
-Compiles ruleset, checks syntax, arms rollback timer, and verifies egress.
+Compiles ruleset, checks syntax, arms rollback timer, and verifies egress. The node's egress mode is recorded to `/etc/countersurveillance/egress.mode` on success, so later refreshes reuse it.
 
 ### 2. Deploy Full Deception Stack (Local Node)
 ```bash
@@ -164,3 +164,23 @@ Installs the sandboxed ChronoSink Go binary under systemd, applies local redirec
 ./uninstall.sh
 ```
 *Guaranteed to remove only `table inet countersurveillance`, preserving all Proxmox, Docker, and host routing tables.*
+
+### 6. Strict Egress Enforcement (Opt-In, Per Node)
+```bash
+sudo STRICT_EGRESS=1 ./deploy.sh filter     # default-deny output + forward
+```
+In strict mode `@essential_egress_*` and `@trusted_mgmt_*` become an enforced whitelist instead of an advisory shortcut: the `output` and `forward` chains default-deny. The `input` chain is unchanged — its management isolation is already explicit, and flipping it to drop adds no protection.
+
+Destination addresses are resolved at generation time from `data/egress_domains.json` and merged into the egress sets, so a vendor CDN move (GitHub fronting changes regularly) cannot silently break egress. If fewer than 80 % of required domains resolve, generation aborts with exit 3 and the live table is left untouched.
+
+Roll back a node to the previous ruleset:
+```bash
+sudo nft -f "$(ls -t /etc/nftables.d/countersurveillance.nft.bak.* | head -1)"
+```
+Rollout status: `t320` strict (staged), `t420` / `730xd` accept.
+
+### 7. Daily Egress Whitelist Refresh
+```bash
+sudo ./deploy.sh install-refresh
+```
+Installs the suite to `/opt/countersurveillance` and a `countersurveillance-refresh.timer` that regenerates and redeploys the ruleset each day in the node's recorded mode. Every run preflights, arms the rollback watchdog, and auto-reverts on verification failure, so a bad DNS day leaves the live table alone. `/etc/countersurveillance/egress.mode` is mandatory for the unit: if it is missing the unit fails loudly rather than downgrading a strict node to accept.

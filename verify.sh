@@ -30,8 +30,23 @@ else
     exit 1
 fi
 
-# 3. DNS Egress Verification
-echo -n "[*] Testing IPv4 DNS Egress (8.8.8.8, 1.1.1.1)... "
+# 3. DNS Egress Verification (actual A-record queries, not ICMP reachability)
+echo -n "[*] Testing IPv4 DNS resolution (8.8.8.8, 1.1.1.1)... "
+DNS_OK=0
+for resolver in 8.8.8.8 1.1.1.1; do
+    if dig +short +time=2 +tries=1 "@${resolver}" example.com A 2>/dev/null \
+        | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+        DNS_OK=$((DNS_OK + 1))
+    fi
+done
+if [ "${DNS_OK}" -eq 2 ]; then
+    echo -e "${G}PASS${NC}"
+else
+    echo -e "${R}FAIL${NC} (A record returned by ${DNS_OK}/2 resolvers)"
+    exit 1
+fi
+
+echo -n "[*] Testing IPv4 ICMP egress (8.8.8.8, 1.1.1.1)... "
 if ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 && ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
     echo -e "${G}PASS${NC}"
 else
