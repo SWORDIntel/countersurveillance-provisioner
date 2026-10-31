@@ -43,24 +43,23 @@ table inet countersurveillance {
         elements = {
             1.0.0.1,
             1.1.1.1,
+            3.209.33.219,
             8.8.4.4,
             8.8.8.8,
             9.9.9.9,
             13.107.213.52,
             13.107.246.52,
-            13.217.234.143,
             20.26.156.210/31,
             20.26.156.215,
             20.26.156.216,
             20.201.0.0/16,
             20.205.0.0/16,
-            34.204.126.254,
-            34.232.98.167,
-            35.174.151.32,
+            23.23.191.49,
             45.138.55.61,
+            54.209.20.254,
             89.169.111.62,
             91.189.88.0/21,
-            98.91.36.254,
+            100.30.151.116,
             100.51.27.57,
             100.60.235.201,
             104.16.97.215,
@@ -69,20 +68,21 @@ table inet countersurveillance {
             104.16.100.215,
             104.16.101.215,
             140.82.112.0/20,
+            142.250.129.91,
+            142.250.129.93,
+            142.250.129.136,
+            142.250.129.190,
             144.126.248.239,
             149.112.112.112,
             151.101.0.0/16,
             172.18.0.0/16,
-            184.193.171.19,
+            184.194.1.54,
+            184.197.226.54,
             185.51.192.61,
             185.51.192.62,
             185.125.188.0/22,
             185.199.108.0/22,
             192.30.252.0/22,
-            192.178.223.91,
-            192.178.223.93,
-            192.178.223.136,
-            192.178.223.190,
             199.232.0.0/16,
             208.67.220.220,
             208.67.222.222
@@ -95,14 +95,14 @@ table inet countersurveillance {
         elements = {
             2001:4860:4860::8844,
             2001:4860:4860::8888,
-            2600:1f18:2148:bc00:12e8:534a:55ac:d5fa,
-            2600:1f18:2148:bc00:d3df:7985:904b:4e46,
+            2600:1f18:2148:bc00:7e0b:31c3:86a5:9e9a,
             2600:1f18:2148:bc01:781:f6f:3b6b:dcbb,
-            2600:1f18:2148:bc01:435e:7bde:e3dc:cb1b,
-            2600:1f18:2148:bc01:c447:b014:4fac:bd8d,
-            2600:1f18:2148:bc01:edd4:eda1:394e:2240,
-            2600:1f18:2148:bc02:9de:a0f9:a29c:7abf,
+            2600:1f18:2148:bc01:582b:3abb:2cfa:aeb8,
+            2600:1f18:2148:bc01:71a8:88f0:342d:7bc3,
+            2600:1f18:2148:bc01:de5e:42d9:cff2:38f8,
+            2600:1f18:2148:bc02:2923:93dc:2ee:b026,
             2600:1f18:2148:bc02:a2e7:dd21:fade:29f,
+            2600:1f18:2148:bc02:d114:7bf3:7ba3:744a,
             2606:4700::6810:61d7,
             2606:4700::6810:62d7,
             2606:4700::6810:63d7,
@@ -121,10 +121,10 @@ table inet countersurveillance {
             2620:fe::fe,
             2620:1ec:46::52,
             2620:1ec:bdf::52,
-            2a00:1450:4009:c0f::5b,
-            2a00:1450:4009:c0f::5d,
-            2a00:1450:4009:c0f::88,
-            2a00:1450:4009:c0f::be,
+            2a00:1450:4009:c08::5b,
+            2a00:1450:4009:c08::5d,
+            2a00:1450:4009:c08::88,
+            2a00:1450:4009:c08::be,
             2a01:b2e0:2::61,
             2a01:b2e0:2::62,
             2a04:4e42::223,
@@ -328,12 +328,11 @@ table inet countersurveillance {
         oifname "tailscale0" accept
         oifname "wg*" accept
         socket cgroupv2 level 2 "system.slice/tailscaled.service" accept
-        socket cgroupv2 level 2 "system.slice/i2pd.service" accept
         socket cgroupv2 level 2 "system.slice/mullvad-daemon.service" accept
         # Workstation profile: web + ssh allowed, everything else whitelisted
         tcp dport { 22, 80, 443 } counter accept
         # What the strict policy would drop (policy may still be accept)
-        counter log prefix "cs-egress-drop " level info limit rate 12/minute burst 5 packets
+        counter log group 1 prefix "cs-egress-drop " limit rate 600/minute burst 50 packets
 
     }
 

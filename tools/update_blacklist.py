@@ -202,7 +202,7 @@ def main():
             allowance_lines.append('        tcp dport { 22, 80, 443 } counter accept')
     if STRICT_LOG_DROPS:
         allowance_lines.append('        # What the strict policy would drop (policy may still be accept)')
-        allowance_lines.append('        counter log prefix "cs-egress-drop " level info limit rate 12/minute burst 5 packets')
+        allowance_lines.append('        counter log group 1 prefix "cs-egress-drop " limit rate 600/minute burst 50 packets')
     allowance_block = "\n".join(allowance_lines) + ("\n" if allowance_lines else "")
 
     nft_template = f"""# Counter-Surveillance & Anti-Reconnaissance Packet Filter

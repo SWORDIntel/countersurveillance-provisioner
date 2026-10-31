@@ -1,30 +1,26 @@
 #!/usr/bin/env bash
-# egress_review.sh — aggregate "would be dropped under strict" across the fleet.
-# Works because the strict profile is still evaluated in accept mode: every
-# packet that reaches the log rule would have been dropped with STRICT_EGRESS=1.
+# egress_review.sh — aggregate "would be dropped under strict" from the single
+# combined NFLOG file collected by egress_collect.sh.
 set -euo pipefail
-SINCE="${1:--24h}"
+COMBINED="${CS_AGG_DIR:-$HOME/.local/state/cs-egress}/all.log"
+WINDOW="${1:-all}"
 
-collect() {
-    local node="$1" target="$2"
-    local raw
-    if [ "$target" = "local" ]; then
-        raw="$(sudo -n journalctl -k --since "$SINCE" --no-pager 2>/dev/null | grep 'cs-egress-drop' || true)"
-    else
-        raw="$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$target" \
-            "sudo -n journalctl -k --since '$SINCE' --no-pager 2>/dev/null | grep 'cs-egress-drop'" 2>/dev/null || true)"
-    fi
-    local n
-    n="$(printf '%s' "$raw" | grep -c 'cs-egress-drop' || true)"
-    printf '\n### %s — %s events\n' "$node" "$n"
-    [ "${n:-0}" -eq 0 ] && return 0
-    printf '%s\n' "$raw" \
-        | grep -oE 'DST=[0-9a-f.]+ .*PROTO=[A-Z]+ SPT=[0-9]+ DPT=[0-9]+' \
-        | sed 's/LEN=[0-9]* //;s/TOS=[^ ]* //;s/PREC=[^ ]* //;s/TTL=[0-9]* //;s/ID=[0-9]* //;s/DF //;s/WINDOW=[0-9]* //;s/RES=[^ ]* //;s/URGP=[0-9]* //' \
-        | sort | uniq -c | sort -rn | head -15
-}
+[ -s "$COMBINED" ] || { echo "no data yet: $COMBINED"; exit 0; }
 
-echo "Would-be drops under STRICT_EGRESS (window: ${SINCE})"
-collect t420 local
-collect t320 john@192.168.1.95
-collect 730xd john@192.168.1.90
+echo "Would-be drops under STRICT_EGRESS (source: $COMBINED, window: $WINDOW)"
+echo
+
+for node in t420 t320 730xd; do
+    events="$(awk -v n="$node" '$1 == n' "$COMBINED" | wc -l)"
+    printf '### %s — %s events\n' "$node" "$events"
+    [ "$events" -eq 0 ] && { echo; continue; }
+    awk -v n="$node" '$1 == n' "$COMBINED" \
+        | grep -oE 'DST=[0-9a-f.]+ .*PROTO=[A-Z]+ SPT=[0-9]+ DPT=[0-9]+|UID=[0-9]+' \
+        | sed 's/LEN=[0-9]* //;s/TOS=[^ ]* //;s/PREC=[^ ]* //;s/TTL=[0-9]* //;s/ID=[0-9]* //;s/DF[^ ]* //;s/WINDOW=[0-9]* //;s/RES=[^ ]* //;s/URGP=[0-9]* //' \
+        | sort | uniq -c | sort -rn | head -10
+    echo
+done
+
+echo "By process owner (UID) / direction:"
+awk '{ for (i=1;i<=NF;i++) if ($i ~ /^UID=/) u=$i } { print $1, u }' "$COMBINED" \
+    | sort | uniq -c | sort -rn | head -10
