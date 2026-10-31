@@ -177,7 +177,14 @@ Roll back a node to the previous ruleset:
 ```bash
 sudo nft -f "$(ls -t /etc/nftables.d/countersurveillance.nft.bak.* | head -1)"
 ```
-Rollout status: `t320` strict (staged), `t420` / `730xd` accept.
+Workstation profile — keeps a daily-driver host usable while still denying all non-web egress:
+
+```bash
+sudo STRICT_EGRESS=1 STRICT_ALLOW_WEB=1 ./deploy.sh filter
+```
+This trusts `tailscale0`/`wg*` interfaces, the `tailscaled`, `i2pd` and `mullvad-daemon` cgroups (regardless of destination), and allows `tcp 80/443`. Allowances are emitted *after* the blackhole rules, so a jailed or blocklisted destination stays dropped even on 443.
+
+Rollout status: `t420` strict + workstation profile, `t320` strict, `730xd` accept (shadowing).
 
 ### 7. Daily Egress Whitelist Refresh
 ```bash

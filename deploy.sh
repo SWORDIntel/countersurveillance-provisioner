@@ -81,11 +81,10 @@ deploy_filter() {
         # Record the node's egress mode so the refresh timer redeploys with the
         # same policy instead of silently downgrading a strict node to accept.
         sudo mkdir -p /etc/countersurveillance
-        if [ "${STRICT_EGRESS:-0}" = "1" ]; then
-            printf 'STRICT_EGRESS=1\n' | sudo tee /etc/countersurveillance/egress.mode >/dev/null
-        else
-            printf 'STRICT_EGRESS=0\n' | sudo tee /etc/countersurveillance/egress.mode >/dev/null
-        fi
+        {
+            if [ "${STRICT_EGRESS:-0}" = "1" ]; then echo 'STRICT_EGRESS=1'; else echo 'STRICT_EGRESS=0'; fi
+            if [ "${STRICT_ALLOW_WEB:-0}" = "1" ]; then echo 'STRICT_ALLOW_WEB=1'; else echo 'STRICT_ALLOW_WEB=0'; fi
+        } | sudo tee /etc/countersurveillance/egress.mode >/dev/null
         echo -e "${G}[+] Deployment verified. Rollback watchdog disarmed.${NC}"
         echo "[+] Egress mode recorded: $(sudo cat /etc/countersurveillance/egress.mode)"
     else
@@ -114,10 +113,17 @@ deploy_refresh_units() {
         # Derive the mode from the ruleset actually installed, so a node already
         # running strict is never silently downgraded to accept by the refresh.
         if sudo grep -qE 'hook (output|forward).*policy drop' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
-            printf 'STRICT_EGRESS=1\n' | sudo tee /etc/countersurveillance/egress.mode >/dev/null
+            {
+                echo 'STRICT_EGRESS=1'
+                if sudo grep -qE 'tcp dport \{ 80, 443 \}' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
+                    echo 'STRICT_ALLOW_WEB=1'
+                else
+                    echo 'STRICT_ALLOW_WEB=0'
+                fi
+            } | sudo tee /etc/countersurveillance/egress.mode >/dev/null
             echo "[*] Detected strict egress in the installed ruleset; recording STRICT_EGRESS=1."
         else
-            printf 'STRICT_EGRESS=0\n' | sudo tee /etc/countersurveillance/egress.mode >/dev/null
+            printf 'STRICT_EGRESS=0\nSTRICT_ALLOW_WEB=0\n' | sudo tee /etc/countersurveillance/egress.mode >/dev/null
             echo "[*] Installed ruleset uses accept policy; recording STRICT_EGRESS=0."
         fi
     fi
