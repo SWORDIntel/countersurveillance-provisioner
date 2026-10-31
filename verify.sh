@@ -105,4 +105,26 @@ if systemctl is-active --quiet chronosink.service 2>/dev/null; then
     fi
 fi
 
+# 8. Tunnel daemon health (guards STRICT_EGRESS rollouts: a default-deny output
+# chain that loses the mesh VPN is a regression the other checks cannot see).
+if systemctl is-active --quiet tailscaled 2>/dev/null; then
+    echo -n "[*] Testing Tailscale mesh state... "
+    if tailscale status --json 2>/dev/null | grep -q '"BackendState": *"Running"'; then
+        echo -e "${G}PASS${NC}"
+    else
+        echo -e "${R}FAIL${NC} (tailscaled not Running)"
+        exit 1
+    fi
+fi
+
+if command -v wg >/dev/null 2>&1 && [ -n "$(sudo -n wg show interfaces 2>/dev/null)" ]; then
+    echo -n "[*] Testing WireGuard handshakes... "
+    if sudo -n wg show all latest-handshakes 2>/dev/null | awk '$2 > 0 {found=1} END {exit !found}'; then
+        echo -e "${G}PASS${NC}"
+    else
+        echo -e "${R}FAIL${NC} (no recent handshake)"
+        exit 1
+    fi
+fi
+
 echo -e "\n${G}[+] All counter-surveillance verification checks completed successfully!${NC}"
