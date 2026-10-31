@@ -84,6 +84,7 @@ deploy_filter() {
         {
             if [ "${STRICT_EGRESS:-0}" = "1" ]; then echo 'STRICT_EGRESS=1'; else echo 'STRICT_EGRESS=0'; fi
             if [ "${STRICT_ALLOW_WEB:-0}" = "1" ]; then echo 'STRICT_ALLOW_WEB=1'; else echo 'STRICT_ALLOW_WEB=0'; fi
+            if [ "${STRICT_LOG_DROPS:-1}" = "1" ]; then echo 'STRICT_LOG_DROPS=1'; else echo 'STRICT_LOG_DROPS=0'; fi
         } | sudo tee /etc/countersurveillance/egress.mode >/dev/null
         echo -e "${G}[+] Deployment verified. Rollback watchdog disarmed.${NC}"
         echo "[+] Egress mode recorded: $(sudo cat /etc/countersurveillance/egress.mode)"
@@ -115,10 +116,15 @@ deploy_refresh_units() {
         if sudo grep -qE 'hook (output|forward).*policy drop' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
             {
                 echo 'STRICT_EGRESS=1'
-                if sudo grep -qE 'tcp dport \{ 80, 443 \}' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
+                if sudo grep -qE 'tcp dport \{ 22, 80, 443 \}' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
                     echo 'STRICT_ALLOW_WEB=1'
                 else
                     echo 'STRICT_ALLOW_WEB=0'
+                fi
+                if sudo grep -q 'cs-egress-drop' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
+                    echo 'STRICT_LOG_DROPS=1'
+                else
+                    echo 'STRICT_LOG_DROPS=0'
                 fi
             } | sudo tee /etc/countersurveillance/egress.mode >/dev/null
             echo "[*] Detected strict egress in the installed ruleset; recording STRICT_EGRESS=1."

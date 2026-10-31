@@ -55,6 +55,8 @@ ESSENTIAL_EGRESS_V4 = [
     # parrot-sabot protected engagement egress: Rayobyte proxy exit and the
     # dedicated parrot0 bridge subnet used by engagement containers
     "144.126.248.239/32", "172.18.0.0/16",
+    # Operator SSH tunnel endpoint (local port forward to the proxy host)
+    "89.169.111.62/32",
     # Chrony upstream time sources (time1/time2.panq.nl, leontp2.office.panq.nl)
     # Required only under STRICT_EGRESS; harmless while the policy is accept.
     "185.51.192.61/32", "185.51.192.62/32", "45.138.55.61/32"
@@ -77,6 +79,10 @@ STRICT_EGRESS = os.environ.get("STRICT_EGRESS", "0") == "1"
 # Workstation profile: also allow plain web egress, so a daily-driver host keeps
 # working while every non-web, non-whitelisted destination stays denied.
 STRICT_ALLOW_WEB = os.environ.get("STRICT_ALLOW_WEB", "0") == "1"
+
+# Log what the strict policy actually drops (rate limited), so the egress
+# profile can be observed instead of guessed.
+STRICT_LOG_DROPS = os.environ.get("STRICT_LOG_DROPS", "1" if STRICT_EGRESS else "0") == "1"
 
 # Daemons whose own traffic is trusted regardless of destination under strict
 # mode: mesh VPN, Tor, and the WireGuard VPN daemon. Emitted only when the unit
@@ -182,11 +188,18 @@ def main():
         allowance_lines.append('        oifname "tailscale0" accept')
         allowance_lines.append('        oifname "wg*" accept')
         for unit in TRUSTED_EGRESS_UNITS:
-            if os.path.exists(f"/sys/fs/cgroup/system.slice/{unit}"):
-                allowance_lines.append(f'        socket cgroupv2 level 1 "system.slice/{unit}" accept')
+            path = f"system.slice/{unit}"
+            if os.path.exists(f"/sys/fs/cgroup/{path}"):
+                # nft compares the cgroup at depth <level>; "system.slice/x.service"
+                # is depth 2, not 1. Getting this wrong makes the rule match nothing.
+                level = path.count("/") + 1
+                allowance_lines.append(f'        socket cgroupv2 level {level} "{path}" accept')
         if STRICT_ALLOW_WEB:
-            allowance_lines.append('        # Workstation profile: the web is allowed, the rest stays whitelisted')
-            allowance_lines.append('        tcp dport { 80, 443 } counter accept')
+            allowance_lines.append('        # Workstation profile: web + ssh allowed, everything else whitelisted')
+            allowance_lines.append('        tcp dport { 22, 80, 443 } counter accept')
+        if STRICT_LOG_DROPS:
+            allowance_lines.append('        # Observe what reaches the strict policy (rate limited)')
+            allowance_lines.append('        counter log prefix "cs-egress-drop " level info limit rate 12/minute burst 5 packets')
     allowance_block = "\n".join(allowance_lines) + ("\n" if allowance_lines else "")
 
     nft_template = f"""# Counter-Surveillance & Anti-Reconnaissance Packet Filter
@@ -352,6 +365,10 @@ table inet countersurveillance {{
         ip daddr @trusted_mgmt_v4 accept
         ip6 daddr @trusted_mgmt_v6 accept
 
+        # Link-local multicast is LAN discovery (mDNS/LLMNR/SSDP), not egress
+        ip daddr {{ 224.0.0.0/4, 255.255.255.255 }} accept
+        ip6 daddr ff00::/8 accept
+
         # Blackhole outbound connections to known scanners or trapped targets
         ip daddr @blocked_v4 counter drop
         ip6 daddr @blocked_v6 counter drop
@@ -374,6 +391,10 @@ table inet countersurveillance {{
         ip6 daddr @essential_egress_v6 accept
         ip daddr @trusted_mgmt_v4 accept
         ip6 daddr @trusted_mgmt_v6 accept
+
+        # Link-local multicast is LAN discovery (mDNS/LLMNR/SSDP), not egress
+        ip daddr {{ 224.0.0.0/4, 255.255.255.255 }} accept
+        ip6 daddr ff00::/8 accept
 
         ip daddr @blocked_v4 counter drop
         ip6 daddr @blocked_v6 counter drop
