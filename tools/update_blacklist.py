@@ -183,7 +183,10 @@ def main():
     egress_policy = "drop" if STRICT_EGRESS else "accept"
 
     allowance_lines = []
-    if STRICT_EGRESS:
+    # Allowances describe what the strict profile WOULD permit. Emit them in
+    # accept mode too, so logged drops measure the same rule set that strict
+    # would have enforced.
+    if STRICT_EGRESS or STRICT_LOG_DROPS:
         allowance_lines.append('        # Tunnel and privacy daemons are trusted regardless of destination')
         allowance_lines.append('        oifname "tailscale0" accept')
         allowance_lines.append('        oifname "wg*" accept')
@@ -197,9 +200,9 @@ def main():
         if STRICT_ALLOW_WEB:
             allowance_lines.append('        # Workstation profile: web + ssh allowed, everything else whitelisted')
             allowance_lines.append('        tcp dport { 22, 80, 443 } counter accept')
-        if STRICT_LOG_DROPS:
-            allowance_lines.append('        # Observe what reaches the strict policy (rate limited)')
-            allowance_lines.append('        counter log prefix "cs-egress-drop " level info limit rate 12/minute burst 5 packets')
+    if STRICT_LOG_DROPS:
+        allowance_lines.append('        # What the strict policy would drop (policy may still be accept)')
+        allowance_lines.append('        counter log prefix "cs-egress-drop " level info limit rate 12/minute burst 5 packets')
     allowance_block = "\n".join(allowance_lines) + ("\n" if allowance_lines else "")
 
     nft_template = f"""# Counter-Surveillance & Anti-Reconnaissance Packet Filter
