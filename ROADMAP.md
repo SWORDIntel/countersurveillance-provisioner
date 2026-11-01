@@ -31,3 +31,9 @@
 - [x] **Phase 6: Fleet Rollout**
   - [x] Deploy hardened local-daemon to `730xd` (192.168.1.90) via `deploy.sh remote`
   - [x] Deploy hardened local-daemon to `T320` (192.168.1.95) via `deploy.sh remote`
+
+- [x] **Phase 7: Evidence-Gated Egress Policy**
+  - [x] Provenance audit of the original 60-CIDR scanner list against primary sources (`data/list_audit.json`); ingress scanner sets scoped input-only
+  - [x] Outbound blocking split into its own evidence-gated store (`data/outbound_blocks.json`: exact /32//128, HTTPS provenance, overlap validation)
+  - [x] NFLOG→ulogd2 drop telemetry with live fleet-wide aggregation (`cs-egress-stream` → `~/.local/state/cs-egress/all.log`)
+  - [x] Evidence-gated strict allowance set from the 24-hour would-be-drop review — QUIC/NTP/DNS/SMTP/STUN/push/WG-transports/BT/he-ipv6/parrot0, shared verbatim between strict and shadow-audit modes

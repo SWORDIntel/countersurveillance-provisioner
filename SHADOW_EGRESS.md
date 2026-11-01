@@ -1,5 +1,14 @@
 # 730xd egress shadow (strict-mode readiness)
 
+> **SUPERSEDED (2026-11-01).** The standalone `inet cs_shadow` table described
+> below has been replaced by **shadow-audit mode** in the main
+> `inet countersurveillance` table: `STRICT_LOG_DROPS=1 STRICT_EGRESS=0
+> ./deploy.sh filter` emits the same allowance set strict mode would use and
+> logs every would-be drop as `cs-audit-out` / `cs-audit-fwd` via
+> NFLOG→ulogd2 (see README §6 and `~/.local/state/cs-egress/all.log`).
+> Verified absent on all three nodes via `nft list tables`; retained as the
+> historical design record.
+
 `table inet cs_shadow` on 730xd logs every **new forwarded flow** that
 `STRICT_EGRESS=1` would blackhole, then accepts it. Nothing is dropped.
 

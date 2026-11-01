@@ -154,6 +154,8 @@ Installs the sandboxed ChronoSink Go binary under systemd, applies local redirec
 ```
 *Note: The remote watchdog restores the previous firewall state automatically if connectivity fails.*
 
+The remote deploy re-applies the **node's recorded mode**: the shipped heredoc sources `/etc/countersurveillance/egress.mode` on the target host, so `filter` over SSH never downgrades a node even when the dispatch host has different `STRICT_*` variables in its environment.
+
 ### 4. Run Verification Suite
 ```bash
 ./verify.sh
@@ -182,9 +184,23 @@ Workstation profile — keeps a daily-driver host usable while still denying all
 ```bash
 sudo STRICT_EGRESS=1 STRICT_ALLOW_WEB=1 ./deploy.sh filter
 ```
-This trusts `tailscale0`/`wg*` interfaces, the `tailscaled`, `i2pd` and `mullvad-daemon` cgroups (regardless of destination), and allows `tcp 80/443`. Allowances are emitted *after* the blackhole rules, so a jailed or blocklisted destination stays dropped even on 443.
+The allowance set is generated per node by `strict_allowances()` (`tools/update_blacklist.py`) and is **shared verbatim between strict enforcement and shadow-audit mode** (`STRICT_LOG_DROPS=1` with `STRICT_EGRESS=0`), so `cs-audit-*` events are exactly the class strict mode would drop. It existence-probes each host (interfaces under `/sys/class/net`, units under `/sys/fs/cgroup/system.slice`) and emits only what is present:
 
-Rollout status: `t420` strict + workstation profile, `t320` strict, `730xd` accept (shadowing).
+- `oifname "lo"` and `ct state established,related`
+- the resolved `@essential_egress_*` destination sets
+- `tailscale0` / `wg*` interfaces
+- web egress with `STRICT_ALLOW_WEB=1`: `tcp dport { 22, 80, 443 }` + `udp dport 443` (QUIC)
+- NTP (123), DNS (53 tcp+udp), SMTP (25), STUN (3478), GCM/FCM push (5228)
+- kernel-WireGuard transports `udp dport { 1025, 41641, 51820, 51821 }` — kernel-owned WG sockets are never attributable via `socket cgroupv2`, so the transport ports are the stable contract
+- BitTorrent: `udp sport 6881` plus a `transmission-daemon.service` cgroup allow (its dynamic destination/port pairs cannot be destination-described)
+- `meta l4proto ipv6-icmp` and ICMP/ICMPv6 echo-request rate-limited to 5/s
+- `socket cgroupv2` unit allows for the `tailscaled`, `i2pd`, `mullvad-daemon` and `transmission-daemon` units that exist on the node
+- Hurricane Electric tunnel: `oifname "he-ipv6"` in output and forward, `ip protocol 41` in output only
+- forward-only `iifname "parrot0"` for Parrot engagement containers
+
+`socket cgroupv2` attribution is emitted **only in `output`** by design: it attributes the locally-owned socket, which does not exist for forwarded VM/LAN traffic (that is covered by the port allows instead). Allowances are emitted *after* the `@outbound_block_*` verdict jumps, so an evidenced blocking decision stays dropped even on an allowed port; the `counter` + `log` audit tail comes last, so it records only traffic no allowance accepted.
+
+Rollout status: all three nodes (`t420`, `730xd`, `t320`) run permissive audit mode (`STRICT_EGRESS=0 STRICT_ALLOW_WEB=1 STRICT_LOG_DROPS=1`) with shadow logging live; the strict flip is gated on a clean 24 h `tools/egress_review.sh` sign-off.
 
 ### 7. Daily Egress Whitelist Refresh
 ```bash
