@@ -23,11 +23,7 @@ printf '%s\n' "$CUR" | sort -u -o "$SEEN"
 COUNT="$(printf '%s\n' "$NEW" | wc -l)"
 SAMPLE="$(printf '%s\n' "$NEW" | head -6 | tr '\n' ' ')"
 
-# Normal urgency: Plasma pins critical popups and ignores -t, so a
-# would-be-drop alert would never expire on screen.
-notify-send -u normal -t 5000 \
-    "730xd egress shadow: ${COUNT} new destination(s)" \
-    "${SAMPLE}
-
-Would be blocked under STRICT_EGRESS.
-Full list: ${SEEN}"
+# Operator request (2026-11-01): record to the journal, no desktop popup.
+# The shadow destination list itself (${SEEN}) is still updated above.
+logger -t cs-shadow-report \
+    "730xd egress shadow: ${COUNT} new destination(s): ${SAMPLE} — would be blocked under STRICT_EGRESS; full list: ${SEEN}"

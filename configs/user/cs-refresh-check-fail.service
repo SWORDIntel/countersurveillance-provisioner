@@ -1,6 +1,8 @@
 [Unit]
-Description=Toast a failed countersurveillance refresh survival check
+Description=Journal a failed countersurveillance refresh survival check
 
 [Service]
 Type=oneshot
-ExecStart=notify-send -u normal -t 5000 -a countersurveillance "CS refresh check FAILED" "Refresh survival check reported failures - journalctl --user -u cs-refresh-check"
+# Operator request (2026-11-01): no desktop popup; the failure is recorded in
+# the user journal and visible via systemctl --user status.
+ExecStart=systemd-cat -t cs-refresh-check /bin/echo "refresh survival check FAILED - see journalctl --user -u cs-refresh-check"
