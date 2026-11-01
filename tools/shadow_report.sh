@@ -23,7 +23,9 @@ printf '%s\n' "$CUR" | sort -u -o "$SEEN"
 COUNT="$(printf '%s\n' "$NEW" | wc -l)"
 SAMPLE="$(printf '%s\n' "$NEW" | head -6 | tr '\n' ' ')"
 
-notify-send -u critical -t 5000 \
+# Normal urgency: Plasma pins critical popups and ignores -t, so a
+# would-be-drop alert would never expire on screen.
+notify-send -u normal -t 5000 \
     "730xd egress shadow: ${COUNT} new destination(s)" \
     "${SAMPLE}
 

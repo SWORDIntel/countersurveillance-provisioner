@@ -3,4 +3,4 @@ Description=Toast a failed countersurveillance refresh survival check
 
 [Service]
 Type=oneshot
-ExecStart=notify-send -u critical -t 5000 -a countersurveillance "CS refresh check FAILED" "Refresh survival check reported failures - journalctl --user -u cs-refresh-check"
+ExecStart=notify-send -u normal -t 5000 -a countersurveillance "CS refresh check FAILED" "Refresh survival check reported failures - journalctl --user -u cs-refresh-check"
