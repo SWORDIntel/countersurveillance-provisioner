@@ -167,6 +167,41 @@ class PolicyTests(unittest.TestCase):
             render(self.directory, outbound={"schema_version": 99, "scope": "outbound", "targets": {}})
         self.assertEqual(old.read_text(), "last known good")
 
+    def test_strict_allowances_match_window_evidence(self):
+        out, fwd = policy.strict_allowances(True, probe=lambda p: False)
+        for lines, chain_name in ((out, "output"), (fwd, "forward")):
+            joined = "\n".join(lines)
+            for needle in ("tcp dport { 22, 80, 443 }", "udp dport 443",
+                           "udp dport 123", "udp dport 53", "tcp dport 53",
+                           "tcp dport 25", "udp dport 3478", "tcp dport 3478",
+                           "tcp dport 5228",
+                           "udp dport { 1025, 41641, 51820, 51821 }",
+                           "udp sport 68 udp dport 67",
+                           "meta l4proto ipv6-icmp"):
+                self.assertIn(needle, joined, f"{chain_name}: {needle}")
+            self.assertNotIn("he-ipv6", joined, chain_name)
+        self.assertNotIn("parrot0", "\n".join(fwd))
+        self.assertNotIn("cgroupv2", "\n".join(out))
+
+    def test_strict_allowance_probes_emit_node_specific_rules(self):
+        out, fwd = policy.strict_allowances(False, probe=lambda p: True)
+        self.assertIn('oifname "he-ipv6" accept', "\n".join(out))
+        self.assertIn('oifname "he-ipv6" accept', "\n".join(fwd))
+        self.assertIn("ip protocol 41 accept", "\n".join(out))
+        self.assertNotIn("ip protocol 41", "\n".join(fwd))
+        self.assertIn('iifname "parrot0" accept', "\n".join(fwd))
+        self.assertNotIn("parrot0", "\n".join(out))
+        # transmission-daemon.service sits directly under system.slice.
+        self.assertIn('socket cgroupv2 level 2 "system.slice/transmission-daemon.service"', "\n".join(out))
+
+    def test_allowances_precede_shadow_log_tail_after_outbound_blocks(self):
+        text = render(self.directory, strict=False, web=True, logging=True)
+        for name in ("output", "forward"):
+            contents = chain(text, name)
+            self.assertLess(contents.index("@outbound_block_v4"), contents.index("udp dport 123"))
+            self.assertLess(contents.index("udp dport 123"), contents.index("log prefix"))
+            self.assertLess(contents.index("meta l4proto ipv6-icmp"), contents.index("log prefix"))
+
     def test_collapse_does_not_change_coverage(self):
         self.assertEqual(policy.collapse_and_clean(["162.142.125.0/25", "162.142.125.128/25"], policy.ipaddress.ip_network), ["162.142.125.0/24"])
 

@@ -89,9 +89,82 @@ STRICT_ALLOW_WEB = os.environ.get("STRICT_ALLOW_WEB", "0") == "1"
 STRICT_LOG_DROPS = os.environ.get("STRICT_LOG_DROPS", "1" if STRICT_EGRESS else "0") == "1"
 
 # Daemons whose own traffic is trusted regardless of destination under strict
-# mode: mesh VPN, Tor, and the WireGuard VPN daemon. Emitted only when the unit
-# is present on the generating host.
-TRUSTED_EGRESS_UNITS = ["tailscaled.service", "i2pd.service", "mullvad-daemon.service"]
+# mode: mesh VPN, Tor, the WireGuard VPN daemon, and BitTorrent (peer ports are
+# dynamic — the 24h window logged 671 dst/port combos on uid 121 alone, so no
+# destination allowlist can describe Transmission). Emitted only when the unit
+# exists on the generating host.
+TRUSTED_EGRESS_UNITS = [
+    "tailscaled.service", "i2pd.service", "mullvad-daemon.service",
+    "transmission-daemon.service",
+]
+
+# Existence probes run at generation time on the generating host; tests inject
+# a fake by patching SYS_PROBE.
+SYS_PROBE = os.path.exists
+
+
+def strict_allowances(allow_web, probe=None):
+    """Allowances shared by the strict and audit (shadow) output/forward chains.
+
+    Every entry is evidence-gated by the 24-hour window analysis
+    (data/window_analysis_2026-11-01.md) plus the fresh audit baseline: ports
+    whose servers churn (NTP pools, resolver upstreams, SMTP relays, STUN) and
+    kernel WireGuard transports, which own no cgroup and would otherwise sever
+    the tunnels the cgroupv2 rules cannot see. Returns (output, forward) line
+    lists; the caller appends the counter/log tail, so anything added here is
+    exempt from the would-be-drop audit by construction.
+    """
+    probe = probe or SYS_PROBE
+    web = []
+    if allow_web:
+        web = ['        tcp dport { 22, 80, 443 } counter accept',
+               '        udp dport 443 counter accept']
+    common = [
+        # Pool NTP rotation defeats a static time-server allowlist.
+        '        udp dport 123 counter accept',
+        # Resolver upstreams churn with DHCP/learned configuration.
+        '        udp dport 53 counter accept',
+        '        tcp dport 53 counter accept',
+        # SMTP: postfix MX delivery and MUA submission to rotating endpoints.
+        '        tcp dport 25 counter accept',
+        # STUN/TURN for voice/video (observed local and spoke-forwarded).
+        '        udp dport 3478 counter accept',
+        '        tcp dport 3478 counter accept',
+        # XMPP push (Google FCM).
+        '        tcp dport 5228 counter accept',
+        # Kernel WireGuard transports create their UDP socket outside any
+        # cgroup, so the unit rules below never match them; the relay/peer
+        # listen ports are the only matchable signature (51820/51821 hubs,
+        # 41641 Tailscale, 1025 observed spoke peer). Without this, strict
+        # mode severs hc-backup/hc-mgmt/Tailscale handshakes.
+        '        udp dport { 1025, 41641, 51820, 51821 } counter accept',
+        # DHCP client renewal and lab dnsmasq replies must survive drop policy.
+        '        udp sport 68 udp dport 67 accept',
+        '        udp sport 67 udp dport 68 accept',
+        '        udp sport 546 udp dport 547 accept',
+        # NDP neighbour-advertisement unicast replies and PMTUDv6 die when
+        # dropped; the ICMPv6 control plane is infrastructure, not egress.
+        '        meta l4proto ipv6-icmp accept',
+    ]
+    if probe("/sys/class/net/he-ipv6"):
+        # HE tunnelbroker: local and forwarded inner IPv6 rides he-ipv6.
+        common.append('        oifname "he-ipv6" accept')
+    output_lines = ['        oifname "tailscale0" accept', '        oifname "wg*" accept'] + web + common
+    forward_lines = list(output_lines)
+    for unit in TRUSTED_EGRESS_UNITS:
+        path = f"system.slice/{unit}"
+        if probe(f"/sys/fs/cgroup/{path}"):
+            level = path.count("/") + 1
+            output_lines.append(f'        socket cgroupv2 level {level} "{path}" accept')
+    if probe("/sys/class/net/he-ipv6"):
+        # The sit driver's outer protocol-41 packets are locally generated
+        # (output only); forwarded tunnel traffic is inner v6 via he-ipv6.
+        output_lines.append('        ip protocol 41 accept')
+    if probe("/sys/class/net/parrot0"):
+        # Engagement-container transit: the parrot_sabot_egress table (higher
+        # priority) owns the proxy pinning; this only must not fight it.
+        forward_lines.append('        iifname "parrot0" accept')
+    return output_lines, forward_lines
 
 
 def resolve_domains(names, family):
@@ -238,22 +311,11 @@ def main():
 
     egress_policy = "drop" if STRICT_EGRESS else "accept"
 
-    allowance_lines = []
-    forward_allowance_lines = []
     # Shadow and enforced profiles share their allowances; only OUTPUT has a
     # local socket and can use cgroup ownership. Neither grants proxy bypass.
+    allowance_lines, forward_allowance_lines = [], []
     if STRICT_EGRESS or STRICT_LOG_DROPS:
-        common = ['        oifname "tailscale0" accept', '        oifname "wg*" accept']
-        if STRICT_ALLOW_WEB:
-            common += ['        tcp dport { 22, 80, 443 } counter accept',
-                       '        udp dport 443 counter accept']
-        allowance_lines.extend(common)
-        forward_allowance_lines.extend(common)
-        for unit in TRUSTED_EGRESS_UNITS:
-            path = f"system.slice/{unit}"
-            if os.path.exists(f"/sys/fs/cgroup/{path}"):
-                level = path.count("/") + 1
-                allowance_lines.append(f'        socket cgroupv2 level {level} "{path}" accept')
+        allowance_lines, forward_allowance_lines = strict_allowances(STRICT_ALLOW_WEB)
     if STRICT_LOG_DROPS:
         kind = "strict" if STRICT_EGRESS else "audit"
         # Count all matches, sample only the log. A limit must never gate a
