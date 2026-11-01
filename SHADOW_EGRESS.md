@@ -18,10 +18,11 @@
 ssh john@192.168.1.90 'sudo journalctl -k --since -24h | grep cs-shadow | grep -oE "DST=[0-9a-f.:]+" | cut -d= -f2 | sort | uniq -c | sort -rn'
 ```
 
-## Toasts
+## Reports (journal, no popup)
 
-Hourly user timer pops a **no-timeout** notification listing only destinations
-not seen before.
+Hourly user timer writes a `cs-shadow-report` journal line listing only
+destinations not seen before — `logger -t cs-shadow-report`, with no desktop
+popup (operator request 2026-11-01; it previously raised a no-timeout toast).
 
 ```bash
 systemctl --user status cs-shadow-report.timer
