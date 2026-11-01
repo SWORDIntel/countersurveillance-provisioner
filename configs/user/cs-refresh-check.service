@@ -1,0 +1,9 @@
+[Unit]
+Description=Post-refresh survival check for the countersurveillance fleet
+# Exit 2 = refresh has not run yet today (rerun after ~05:00 GMT) — not a failure.
+OnFailure=cs-refresh-check-fail.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/Documents/countersurveillance-provisioner/tools/refresh_survival_check.sh
+SuccessExitStatus=2
