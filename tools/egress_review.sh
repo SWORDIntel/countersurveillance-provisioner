@@ -14,10 +14,12 @@ for node in t420 t320 730xd; do
     events="$(awk -v n="$node" '$1 == n' "$COMBINED" | wc -l)"
     printf '### %s — %s events\n' "$node" "$events"
     [ "$events" -eq 0 ] && { echo; continue; }
+    # NB: no head(1) in a pipefail pipeline — SIGPIPE from head aborts the
+    # whole script before later nodes are summarised. Truncate with awk.
     awk -v n="$node" '$1 == n' "$COMBINED" \
         | grep -oE 'DST=[0-9a-f.]+ .*PROTO=[A-Z]+ SPT=[0-9]+ DPT=[0-9]+|UID=[0-9]+' \
         | sed 's/LEN=[0-9]* //;s/TOS=[^ ]* //;s/PREC=[^ ]* //;s/TTL=[0-9]* //;s/ID=[0-9]* //;s/DF[^ ]* //;s/WINDOW=[0-9]* //;s/RES=[^ ]* //;s/URGP=[0-9]* //' \
-        | sort | uniq -c | sort -rn | head -10
+        | sort | uniq -c | sort -rn | awk 'NR <= 10'
     echo
 done
 

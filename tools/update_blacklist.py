@@ -14,10 +14,14 @@ import json
 import os
 import socket
 import sys
+import tempfile
+from datetime import date
+from urllib.parse import urlsplit
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JSON_PATH = os.path.join(BASE_DIR, "data", "scanner_subnets.json")
 DOMAINS_PATH = os.path.join(BASE_DIR, "data", "egress_domains.json")
+OUTBOUND_PATH = os.path.join(BASE_DIR, "data", "outbound_blocks.json")
 OUTPUT_NFT = os.path.join(BASE_DIR, "configs", "countersurveillance.nft")
 
 # Refuse to emit a ruleset if the domain list resolves too thinly: under
@@ -122,20 +126,72 @@ def indent_elements(items):
     return ",\n".join(f"            {item}" for item in items)
 
 
-def main():
-    if not os.path.exists(JSON_PATH):
-        print(f"[-] Missing database: {JSON_PATH}", file=sys.stderr)
-        sys.exit(1)
-
-    with open(JSON_PATH, "r") as f:
+def load_scoped_targets(path, scope, today=None):
+    """Only reviewed, unexpired records can enter an enforcement set."""
+    today = today or date.today()
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
+    expected_version = 3 if scope == "ingress" else 1
+    if data.get("schema_version") != expected_version or data.get("scope") != scope:
+        raise ValueError(f"{path}: expected schema {expected_version}, scope {scope}")
+    targets = data.get("targets")
+    if not isinstance(targets, dict):
+        raise ValueError(f"{path}: targets must be an object")
+    addresses = {4: [], 6: []}
+    for key, target in targets.items():
+        if not isinstance(target, dict):
+            raise ValueError(f"{key}: target must be an object")
+        nets = []
+        for family in (4, 6):
+            values = target.get(f"ipv{family}", [])
+            if not isinstance(values, list):
+                raise ValueError(f"{key}: ipv{family} must be a list")
+            for value in values:
+                net = ipaddress.ip_network(value)
+                if net.version != family:
+                    raise ValueError(f"{key}: wrong address family: {value}")
+                nets.append(net)
+        if not nets:
+            continue
+        sources = target.get("sources", [])
+        if not isinstance(sources, list) or not sources or any(
+            not isinstance(s, str) or urlsplit(s).scheme != "https"
+            or not urlsplit(s).hostname or urlsplit(s).username for s in sources
+        ):
+            raise ValueError(f"{key}: nonempty HTTPS provenance is required")
+        reviewed = date.fromisoformat(target["reviewed_at"])
+        expires = date.fromisoformat(target["expires_at"])
+        if reviewed > today or expires <= reviewed:
+            raise ValueError(f"{key}: invalid review/expiry interval")
+        if scope == "outbound":
+            if (target.get("category") not in {"tracking", "spyware_c2"}
+                    or target.get("dedicated") is not True
+                    or not isinstance(target.get("evidence"), str)
+                    or not target["evidence"].strip()):
+                raise ValueError(f"{key}: dedicated tracking/C2 endpoint evidence required")
+            for net in nets:
+                if net.prefixlen != net.max_prefixlen or not net.network_address.is_global:
+                    raise ValueError(f"{key}: outbound IP blocks must be exact public endpoints: {net}")
+        if expires <= today:
+            print(f"[!] Expired {scope} entry omitted: {key} ({expires})", file=sys.stderr)
+            continue
+        for net in nets:
+            addresses[net.version].append(str(net))
+    return addresses[4], addresses[6]
 
-    raw_blocked_v4 = []
-    raw_blocked_v6 = []
 
-    for key, target in data.get("targets", {}).items():
-        raw_blocked_v4.extend(target.get("ipv4", []))
-        raw_blocked_v6.extend(target.get("ipv6", []))
+def validate_overlaps(blocked, protected, label):
+    for value in blocked:
+        net = ipaddress.ip_network(value)
+        for allowed in protected:
+            other = ipaddress.ip_network(allowed)
+            if net.version == other.version and net.overlaps(other):
+                raise ValueError(f"{label} {net} overlaps protected infrastructure {other}")
+
+
+def main():
+    raw_blocked_v4, raw_blocked_v6 = load_scoped_targets(JSON_PATH, "ingress")
+    outbound_v4, outbound_v6 = load_scoped_targets(OUTBOUND_PATH, "outbound")
 
     trusted_v4_clean = collapse_and_clean(TRUSTED_MGMT_V4, ipaddress.ip_network)
     trusted_v6_clean = collapse_and_clean(TRUSTED_MGMT_V6, ipaddress.ip_network)
@@ -165,45 +221,58 @@ def main():
     blocked_v4_clean = collapse_and_clean(raw_blocked_v4, ipaddress.ip_network)
     blocked_v6_clean = collapse_and_clean(raw_blocked_v6, ipaddress.ip_network)
 
-    # Sanity checks: Ensure no blocked range overlaps essential egress or management
-    protected_v4 = [ipaddress.ip_network(n) for n in TRUSTED_MGMT_V4 + egress_v4_source]
-    for b in blocked_v4_clean:
-        b_obj = ipaddress.ip_network(b)
-        for p in protected_v4:
-            if b_obj.overlaps(p):
-                print(f"[!] SAFETY ERROR: Blocked range {b} overlaps protected range {p}!", file=sys.stderr)
-                sys.exit(2)
+    # Ingress lists must not jail management; outbound blocks must not shadow
+    # essential infrastructure, even when its addresses are on shared hosting.
+    validate_overlaps(blocked_v4_clean + blocked_v6_clean,
+                      TRUSTED_MGMT_V4 + TRUSTED_MGMT_V6, "Ingress scanner")
+    validate_overlaps(outbound_v4 + outbound_v6,
+                      TRUSTED_MGMT_V4 + TRUSTED_MGMT_V6 + egress_v4_source + egress_v6_source,
+                      "Outbound endpoint")
 
     print(f"[+] Management Whitelist: {len(trusted_v4_clean)} v4, {len(trusted_v6_clean)} v6")
     print(f"[+] Essential Egress:     {len(egress_v4_clean)} v4, {len(egress_v6_clean)} v6 "
           f"({len(resolved_v4)} v4/{len(resolved_v6)} v6 from {len(required) + len(optional)} domains)")
-    print(f"[+] Collapsed Blocklist:  {len(blocked_v4_clean)} v4, {len(blocked_v6_clean)} v6")
+    print(f"[+] Ingress Scanners:     {len(blocked_v4_clean)} v4, {len(blocked_v6_clean)} v6")
+    print(f"[+] Outbound Endpoints:   {len(outbound_v4)} v4, {len(outbound_v6)} v6")
     print(f"[+] Output/Forward Policy: {'DROP (strict)' if STRICT_EGRESS else 'ACCEPT (whitelist advisory)'}")
 
     egress_policy = "drop" if STRICT_EGRESS else "accept"
 
     allowance_lines = []
-    # Allowances describe what the strict profile WOULD permit. Emit them in
-    # accept mode too, so logged drops measure the same rule set that strict
-    # would have enforced.
+    forward_allowance_lines = []
+    # Shadow and enforced profiles share their allowances; only OUTPUT has a
+    # local socket and can use cgroup ownership. Neither grants proxy bypass.
     if STRICT_EGRESS or STRICT_LOG_DROPS:
-        allowance_lines.append('        # Tunnel and privacy daemons are trusted regardless of destination')
-        allowance_lines.append('        oifname "tailscale0" accept')
-        allowance_lines.append('        oifname "wg*" accept')
+        common = ['        oifname "tailscale0" accept', '        oifname "wg*" accept']
+        if STRICT_ALLOW_WEB:
+            common += ['        tcp dport { 22, 80, 443 } counter accept',
+                       '        udp dport 443 counter accept']
+        allowance_lines.extend(common)
+        forward_allowance_lines.extend(common)
         for unit in TRUSTED_EGRESS_UNITS:
             path = f"system.slice/{unit}"
             if os.path.exists(f"/sys/fs/cgroup/{path}"):
-                # nft compares the cgroup at depth <level>; "system.slice/x.service"
-                # is depth 2, not 1. Getting this wrong makes the rule match nothing.
                 level = path.count("/") + 1
                 allowance_lines.append(f'        socket cgroupv2 level {level} "{path}" accept')
-        if STRICT_ALLOW_WEB:
-            allowance_lines.append('        # Workstation profile: web + ssh allowed, everything else whitelisted')
-            allowance_lines.append('        tcp dport { 22, 80, 443 } counter accept')
     if STRICT_LOG_DROPS:
-        allowance_lines.append('        # What the strict policy would drop (policy may still be accept)')
-        allowance_lines.append('        counter log group 1 prefix "cs-egress-drop " limit rate 600/minute burst 50 packets')
-    allowance_block = "\n".join(allowance_lines) + ("\n" if allowance_lines else "")
+        kind = "strict" if STRICT_EGRESS else "audit"
+        # Count all matches, sample only the log. A limit must never gate a
+        # drop verdict, nor follow the log it is meant to limit.
+        allowance_lines += ['        counter',
+                            f'        limit rate 600/minute burst 50 packets log prefix "cs-{kind}-out " group 1']
+        forward_allowance_lines += ['        counter',
+                                    f'        limit rate 600/minute burst 50 packets log prefix "cs-{kind}-fwd " group 1']
+    allowance_block = "\n".join(allowance_lines)
+    forward_allowance_block = "\n".join(forward_allowance_lines)
+
+    # nft rejects `elements = {  }` on an empty set; declare it bare instead.
+    def outbound_set(name, family, items):
+        if not items:
+            return f"    set {name} {{\n        type ipv{family}_addr\n        flags interval\n    }}"
+        return (f"    set {name} {{\n        type ipv{family}_addr\n"
+                f"        flags interval\n        elements = {{ {', '.join(items)} }}\n    }}")
+    outbound_set_v4 = outbound_set("outbound_block_v4", 4, outbound_v4)
+    outbound_set_v6 = outbound_set("outbound_block_v6", 6, outbound_v6)
 
     nft_template = f"""# Counter-Surveillance & Anti-Reconnaissance Packet Filter
 # Generated by update_blacklist.py
@@ -254,7 +323,7 @@ table inet countersurveillance {{
     }}
 
     # --------------------------------------------------------------------------
-    # 3. Known Active Surveillance & OSINT Scanner Subnets
+    # 3. Source-verified INGRESS scanner networks (not tracking destinations)
     # --------------------------------------------------------------------------
     set blocked_v4 {{
         type ipv4_addr
@@ -272,8 +341,30 @@ table inet countersurveillance {{
         }}
     }}
 
+    # Independently reviewed dedicated outbound tracking / spyware endpoints.
+    # Empty sets mean no such attribution has been established by this audit.
+{outbound_set_v4}
+{outbound_set_v6}
+
+    chain ingress_scanner_drop {{
+        limit rate 600/minute burst 50 packets log prefix "cs-in-scan " group 1
+        counter drop
+    }}
+    chain ingress_jail_drop {{
+        limit rate 600/minute burst 50 packets log prefix "cs-in-jail " group 1
+        counter drop
+    }}
+    chain outbound_drop {{
+        limit rate 600/minute burst 50 packets log prefix "cs-out-block " group 1
+        counter drop
+    }}
+    chain forward_drop {{
+        limit rate 600/minute burst 50 packets log prefix "cs-fwd-block " group 1
+        counter drop
+    }}
+
     # --------------------------------------------------------------------------
-    # 4. Dynamic Auto-Trapped Scanners (24-hour Jails)
+    # 4. Dynamic Auto-Trapped Scanners (24-hour INGRESS-only Jails)
     # --------------------------------------------------------------------------
     set dynamic_scanners_v4 {{
         type ipv4_addr
@@ -293,8 +384,9 @@ table inet countersurveillance {{
     chain prerouting {{
         type nat hook prerouting priority dstnat; policy accept;
 
-        # Exempt loopback from redirection
+        # Decoys belong to this host, never a VM/container transit destination.
         iifname "lo" accept
+        fib daddr type != local return
 
         # Steer trapped scanner IPs hitting web decoys -> local ChronoSink HTTP
         ip saddr @dynamic_scanners_v4 tcp dport {{ 80, 8080, 8443 }} redirect to :9080
@@ -325,12 +417,12 @@ table inet countersurveillance {{
         ct state established,related accept
 
         # C. Auto-Jailed Scanner Suppression
-        ip saddr @dynamic_scanners_v4 counter drop
-        ip6 saddr @dynamic_scanners_v6 counter drop
+        ip saddr @dynamic_scanners_v4 jump ingress_jail_drop
+        ip6 saddr @dynamic_scanners_v6 jump ingress_jail_drop
 
         # D. Known OSINT Scanner Blocklist
-        ip saddr @blocked_v4 counter drop
-        ip6 saddr @blocked_v6 counter drop
+        ip saddr @blocked_v4 jump ingress_scanner_drop
+        ip6 saddr @blocked_v6 jump ingress_scanner_drop
 
         # E. Decoy Port Traps: Auto-jail external probes into dynamic sets
         # Excludes loopback and authorized management subnets from self-jailing
@@ -360,6 +452,9 @@ table inet countersurveillance {{
         # Loopback traffic is trusted unconditionally
         oifname "lo" accept
 
+        # A reviewed outbound endpoint is independent of ingress scan history.
+        ip daddr @outbound_block_v4 jump outbound_drop
+        ip6 daddr @outbound_block_v6 jump outbound_drop
         ct state established,related accept
 
         # Whitelist critical developer & management egress
@@ -372,14 +467,7 @@ table inet countersurveillance {{
         ip daddr {{ 224.0.0.0/4, 255.255.255.255 }} accept
         ip6 daddr ff00::/8 accept
 
-        # Blackhole outbound connections to known scanners or trapped targets
-        ip daddr @blocked_v4 counter drop
-        ip6 daddr @blocked_v6 counter drop
-        ip daddr @dynamic_scanners_v4 counter drop
-        ip6 daddr @dynamic_scanners_v6 counter drop
-
-        # Allowances sit after the blackhole rules so a jailed or blocklisted
-        # destination stays dropped even on an otherwise allowed port.
+        # Scanner sets and honeypot jails have NO outbound authority.
 {allowance_block}
     }}
 
@@ -388,6 +476,8 @@ table inet countersurveillance {{
     # --------------------------------------------------------------------------
     chain forward {{
         type filter hook forward priority -5; policy {egress_policy};
+        ip daddr @outbound_block_v4 jump forward_drop
+        ip6 daddr @outbound_block_v6 jump forward_drop
         ct state established,related accept
 
         ip daddr @essential_egress_v4 accept
@@ -399,18 +489,29 @@ table inet countersurveillance {{
         ip daddr {{ 224.0.0.0/4, 255.255.255.255 }} accept
         ip6 daddr ff00::/8 accept
 
-        ip daddr @blocked_v4 counter drop
-        ip6 daddr @blocked_v6 counter drop
-        ip daddr @dynamic_scanners_v4 counter drop
-        ip6 daddr @dynamic_scanners_v6 counter drop
+{forward_allowance_block}
     }}
 }}
 """
-    with open(OUTPUT_NFT, "w") as f:
-        f.write(nft_template)
+    # A resolver/schema/write failure must leave the last generated file intact.
+    fd, temporary = tempfile.mkstemp(prefix=".countersurveillance-", dir=os.path.dirname(OUTPUT_NFT))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(nft_template)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, OUTPUT_NFT)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
     print(f"[+] Output written to: {OUTPUT_NFT}")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"[!] SAFETY ERROR: {exc}", file=sys.stderr)
+        sys.exit(2)

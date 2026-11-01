@@ -1,119 +1,74 @@
 {
-  "description": "Counter-surveillance scanner, telemetry, and OSINT reconnaissance IP targets",
-  "version": "2.0.0",
-  "updated": "2026-10-30",
+  "schema_version": 3,
+  "scope": "ingress",
+  "description": "Ingress-only scanner networks whose scanning activity is documented by the operator itself (official scanner ranges or self-describing netblock remarks). Entries are reviewed individually; anything unsupported by a primary source is quarantined in list_audit.json. These sets MUST NOT be referenced from output/forward chains: an ingress scanner address says nothing about what the host may talk to.",
+  "reviewed_at": "2026-11-01",
+  "review_methodology": "Each CIDR checked against the provider's own published scanner documentation (Censys opt-out page, Cortex Xpanse scanning-activity reference, Rapid7 Sonar about page) or the org's self-description in RIPE/ARIN registry remarks. RIR allocation, PTR records, AS-SETs, or community reputation alone are NOT accepted as proof of scanner role.",
   "targets": {
     "censys": {
-      "name": "Censys Internet Intelligence Scanner Fleets",
+      "name": "Censys internet scanners (officially published scan ranges)",
       "ipv4": [
-        "74.120.14.0/24",
         "162.142.125.0/24",
         "167.94.138.0/24",
         "167.94.145.0/24",
         "167.94.146.0/24",
-        "167.248.133.0/24",
-        "192.35.168.0/23"
+        "167.248.133.0/24"
       ],
       "ipv6": [
-        "2620:96:e000::/48",
-        "2602:80d:1000::/40"
-      ]
-    },
-    "shodan": {
-      "name": "Shodan Port Probers & Fingerprinters",
-      "ipv4": [
-        "66.240.236.119/32",
-        "71.6.135.131/32",
-        "71.6.165.200/32",
-        "71.6.167.142/32",
-        "104.131.0.69/32",
-        "104.236.198.48/32",
-        "155.138.214.85/32",
-        "185.180.143.0/24",
-        "188.166.26.88/32",
-        "198.20.69.0/24",
-        "198.20.70.0/24",
-        "198.20.87.0/24",
-        "198.20.99.130/32",
-        "208.180.20.97/32",
-        "209.126.110.38/32"
+        "2620:96:e000:b0cc:e::/80",
+        "2602:80d:1000:b0cc:e::/80"
       ],
-      "ipv6": [
-        "2602:ffd6::/32"
-      ]
-    },
-    "shadowserver": {
-      "name": "Shadowserver Foundation Scanners",
-      "ipv4": [
-        "184.105.139.64/26",
-        "184.105.247.192/26",
-        "216.218.206.64/26"
+      "sources": [
+        "https://docs.censys.com/docs/opt-out-of-data-collection"
       ],
-      "ipv6": [
-        "2001:470:1:1b9::/64",
-        "2607:f740:e::/48"
-      ]
-    },
-    "stretchoid": {
-      "name": "Stretchoid Mass-Port Scanner",
-      "ipv4": [
-        "141.98.0.0/16",
-        "194.26.29.0/24",
-        "194.135.25.0/24"
-      ],
-      "ipv6": []
-    },
-    "rapid7_sonar": {
-      "name": "Rapid7 Project Sonar / Recog Crawlers",
-      "ipv4": [
-        "71.6.216.224/27",
-        "71.6.232.0/24",
-        "146.185.183.0/24"
-      ],
-      "ipv6": [
-        "2604:a880::/32"
-      ]
+      "notes": "Ranges verified verbatim against Censys's published scanner list on 2026-11-01. IPv6 narrowed from legacy /48 and /40 declarations to the exact /80 scan prefixes Censys publishes. 74.120.14.0/24 and 192.35.168.0/23 no longer appear in the official list and are quarantined.",
+      "reviewed_at": "2026-11-01",
+      "expires_at": "2027-01-31"
     },
     "cortex_xpanse": {
-      "name": "Palo Alto Networks Cortex Xpanse",
+      "name": "Palo Alto Cortex Xpanse general internet scanners (officially published)",
       "ipv4": [
-        "144.86.173.0/24",
-        "144.86.174.0/24",
-        "144.86.175.0/24",
-        "199.30.26.0/24",
-        "199.30.27.0/24"
+        "144.86.173.0/24"
       ],
-      "ipv6": []
-    },
-    "commercial_telemetry": {
-      "name": "Commercial Surveillance, Data Brokers & Bulletproof Scanners",
-      "ipv4": [
-        "51.255.45.0/24",
-        "65.154.226.0/24",
-        "108.61.165.0/24",
-        "178.32.79.0/24",
-        "185.82.202.0/24",
-        "185.163.109.0/24",
-        "185.180.14.0/24",
-        "194.72.238.0/24",
-        "194.106.56.0/24",
-        "195.188.87.0/24",
-        "198.147.22.0/24",
-        "209.126.126.0/24"
+      "ipv6": [],
+      "sources": [
+        "https://cortex-docs.paloaltonetworks.com/cortex-xpanse/reference/scanning-activity.md"
       ],
-      "ipv6": []
+      "notes": "Only 144.86.173.0/24 appears in Xpanse's published scanning-activity ranges as of 2026-11-01. 144.86.174.0/24, 144.86.175.0/24, 199.30.26.0/24 and 199.30.27.0/24 are absent (legacy Expanse allocations / tenant-specific AST ranges) and are quarantined.",
+      "reviewed_at": "2026-11-01",
+      "expires_at": "2027-01-31"
     },
-    "hostile_probers": {
-      "name": "Known Persistent Hostile Exploitation & Brute-Force Networks",
+    "rapid7_sonar": {
+      "name": "Rapid7 Project Sonar scanners (officially published ranges)",
       "ipv4": [
-        "45.143.203.0/24",
-        "45.155.205.0/24",
+        "71.6.233.0/24",
+        "66.228.41.127/32",
+        "45.79.190.10/32",
+        "66.175.212.77/32",
+        "173.255.225.139/32"
+      ],
+      "ipv6": [],
+      "sources": [
+        "https://sonardata.rapid7.com/about"
+      ],
+      "notes": "Replaces the previous entirely incorrect rapid7_sonar entries (71.6.216.224/27, 71.6.232.0/24, 146.185.183.0/24 DigitalOcean VPS space, 2604:a880::/32 DigitalOcean IPv6). This list is exactly what Rapid7's Sonar page publishes as its scan sources as of 2026-11-01.",
+      "reviewed_at": "2026-11-01",
+      "expires_at": "2027-01-31"
+    },
+    "research_scanners": {
+      "name": "Self-disclosed internet measurement scanners (Recyber, Driftnet)",
+      "ipv4": [
         "89.248.165.0/24",
-        "185.156.73.0/24",
-        "185.220.101.0/24",
         "193.163.125.0/24"
       ],
-      "ipv6": []
+      "ipv6": [],
+      "sources": [
+        "https://rdap.db.ripe.net/ip/89.248.165.0",
+        "https://rdap.db.ripe.net/ip/193.163.125.0"
+      ],
+      "notes": "Operator's own RIPE netobject remarks state these blocks are non-hostile research/measurement scanning ('RECYBER PROJECT NETBLOCK: This net-block is not trying to hack you'; Driftnet internet-measurement.com). Self-description in the operator's own registry object is accepted as primary documentation of scanner role.",
+      "reviewed_at": "2026-11-01",
+      "expires_at": "2027-01-31"
     }
   }
 }

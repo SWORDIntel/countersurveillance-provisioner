@@ -121,7 +121,10 @@ deploy_refresh_units() {
                 else
                     echo 'STRICT_ALLOW_WEB=0'
                 fi
-                if sudo grep -q 'cs-egress-drop' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
+                # New generator names per-direction prefixes (cs-audit-out /
+                # cs-strict-fwd, ...); the old monolithic 'cs-egress-drop' is
+                # gone. Match any cs- log rule so strict nodes keep logging.
+                if sudo grep -qE 'log prefix "cs-' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
                     echo 'STRICT_LOG_DROPS=1'
                 else
                     echo 'STRICT_LOG_DROPS=0'
@@ -254,13 +257,24 @@ if [ -f "\${BACKUP_FILE}" ]; then
     WATCHDOG_PID=\$!
 fi
 
-# Execute deployment command
-sudo ./deploy.sh ${SUB_CMD}
+# Execute deployment command. SSH does not forward the operator's env, and
+# the generator's unexported defaults differ from deploy.sh's record step, so
+# re-apply the node's recorded egress mode explicitly (defaults: permissive
+# accept with drop logging, matching deploy.sh's STRICT_LOG_DROPS default).
+if [ -f /etc/countersurveillance/egress.mode ]; then
+    # shellcheck source=/dev/null
+    . /etc/countersurveillance/egress.mode
+    export STRICT_EGRESS STRICT_ALLOW_WEB STRICT_LOG_DROPS
+fi
+sudo -n env STRICT_EGRESS="${STRICT_EGRESS:-0}" \
+    STRICT_ALLOW_WEB="${STRICT_ALLOW_WEB:-0}" \
+    STRICT_LOG_DROPS="${STRICT_LOG_DROPS:-1}" \
+    ./deploy.sh ${SUB_CMD}
 
 # Disarm watchdog on success
 if [ -n "\${WATCHDOG_PID}" ]; then
     kill "\${WATCHDOG_PID}" 2>/dev/null || true
-    rm -f "\${BACKUP_FILE}"
+    sudo -n rm -f "\${BACKUP_FILE}"
     echo "[✓] Remote deployment successful. Watchdog disarmed."
 fi
 

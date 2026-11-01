@@ -79,21 +79,31 @@ else
     exit 1
 fi
 
-# 6. Surveillance Scanner Interception Test
-echo -n "[*] Testing Scanner Packet Interception (Censys 162.142.125.1)... "
-PRE_DROPS=$(sudo nft list table inet countersurveillance | grep "ip daddr @blocked_v4" | awk '{for(i=1;i<=NF;i++) if($i=="packets") print $(i+1)}' | head -n 1)
-PRE_DROPS=${PRE_DROPS:-0}
+# 6. Scope separation: scanner/jail sets are INGRESS-only. The 2026-11-01
+# provenance audit removed scanner networks from output/forward entirely, so
+# the old "ping a Censys IP and watch it drop" test now asserts the WRONG
+# behavior (an outbound drop would mean the blunt-instrument list is back).
+echo -n "[*] Testing ingress/outbound scope separation... "
+RULESET=$(sudo nft list table inet countersurveillance 2>/dev/null || true)
+fail_scope() { echo -e "${R}FAIL${NC} ($1)"; exit 1; }
 
-ping -c 1 -W 1 162.142.125.1 >/dev/null 2>&1 || true
+if [ -z "$RULESET" ]; then fail_scope "countersurveillance table missing"; fi
 
-POST_DROPS=$(sudo nft list table inet countersurveillance | grep "ip daddr @blocked_v4" | awk '{for(i=1;i<=NF;i++) if($i=="packets") print $(i+1)}' | head -n 1)
-POST_DROPS=${POST_DROPS:-0}
-
-if [ "$POST_DROPS" -gt "$PRE_DROPS" ]; then
-    echo -e "${G}PASS${NC} (Drop counter incremented: $PRE_DROPS -> $POST_DROPS)"
-else
-    echo -e "${Y}WARNING${NC} (Counter unchanged: $PRE_DROPS -> $POST_DROPS)"
-fi
+for chain in output forward; do
+    CHAIN_TXT=$(printf '%s\n' "$RULESET" | sed -n "/chain $chain {/,/^\t}/p")
+    if printf '%s\n' "$CHAIN_TXT" | grep -qE '@(blocked_v[46]|dynamic_scanners_v[46])'; then
+        fail_scope "$chain references ingress-only scanner set"
+    fi
+done
+for setname in blocked_v4 blocked_v6 dynamic_scanners_v4 dynamic_scanners_v6; do
+    if ! printf '%s\n' "$RULESET" | grep -qE "set $setname"; then
+        fail_scope "ingress set $setname missing from table"
+    fi
+done
+# The inbound references must exist where they belong.
+INPUT_TXT=$(printf '%s\n' "$RULESET" | sed -n "/chain input {/,/^\t}/p")
+printf '%s\n' "$INPUT_TXT" | grep -q '@blocked_v4' || fail_scope "input does not reference @blocked_v4"
+echo -e "${G}PASS${NC} (scanner sets ingress-only; outbound endpoint sets present)"
 
 # 7. ChronoSink Local Deception Status (if installed)
 if systemctl is-active --quiet chronosink.service 2>/dev/null; then

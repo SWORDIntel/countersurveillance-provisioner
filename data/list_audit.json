@@ -1,0 +1,192 @@
+{
+  "audit_date": "2026-11-01",
+  "audit_method": "Every CIDR from the pre-audit scanner_subnets.json (version 2.0.0, 60 CIDRs) checked against primary sources: the provider's own published scanner documentation, RIPE/ARIN registry objects (RDAP), and Tor directory consensus. RIR allocation, PTR records or community reputation alone do not establish scanner role. Quarantined entries are recorded here, NOT deleted, and must not be re-added without new primary-source evidence.",
+  "verdicts": [
+    {
+      "category": "censys",
+      "cidr": "74.120.14.0/24",
+      "verdict": "quarantined",
+      "reason": "Not present in Censys's published scanner range list as of 2026-11-01.",
+      "source": "https://docs.censys.com/docs/opt-out-of-data-collection"
+    },
+    {
+      "category": "censys",
+      "cidr": "192.35.168.0/23",
+      "verdict": "quarantined",
+      "reason": "Not present in Censys's published scanner range list as of 2026-11-01.",
+      "source": "https://docs.censys.com/docs/opt-out-of-data-collection"
+    },
+    {
+      "category": "censys",
+      "cidr": "2620:96:e000::/48",
+      "verdict": "narrowed",
+      "replaced_by": "2620:96:e000:b0cc:e::/80",
+      "reason": "Official documentation publishes only the /80 scan prefix within this /48.",
+      "source": "https://docs.censys.com/docs/opt-out-of-data-collection"
+    },
+    {
+      "category": "censys",
+      "cidr": "2602:80d:1000::/40",
+      "verdict": "narrowed",
+      "replaced_by": "2602:80d:1000:b0cc:e::/80",
+      "reason": "Official documentation publishes only the /80 scan prefix within this /40.",
+      "source": "https://docs.censys.com/docs/opt-out-of-data-collection"
+    },
+    {
+      "category": "shodan",
+      "cidr": "ALL (66.240.236.119/32, 71.6.135.131/32, 71.6.165.200/32, 71.6.167.142/32, 104.131.0.69/32, 104.236.198.48/32, 155.138.214.85/32, 185.180.143.0/24, 188.166.26.88/32, 198.20.69.0/24, 198.20.70.0/24, 198.20.87.0/24, 198.20.99.130/32, 208.180.20.97/32, 209.126.110.38/32, 2602:ffd6::/32)",
+      "verdict": "quarantined",
+      "reason": "Shodan publishes no static scanner IP list; its crawlers are deliberately distributed across commercial cloud providers (its own architecture documentation states this). 198.20.69.0/24, 198.20.70.0/24, 198.20.87.0/24 and 2602:ffd6::/32 are RIR registrations to Shodan entities, which alone does not establish active scanner deployment. The /32s on DigitalOcean/Vultr are shared-hosting addresses.",
+      "source": "https://book.shodan.io/behind-the-scenes/crawler-algorithm/"
+    },
+    {
+      "category": "shadowserver",
+      "cidr": "ALL (184.105.139.64/26, 184.105.247.192/26, 216.218.206.64/26, 2001:470:1:1b9::/64, 2607:f740:e::/48)",
+      "verdict": "quarantined",
+      "reason": "Shadowserver explains its scanning mission and offers an opt-out, but publishes no machine-readable scanner CIDR list. These blocks rest on historical PTR/RIR association only.",
+      "source": "https://www.shadowserver.org/faq/why-are-your-ips-scanning-my-network/"
+    },
+    {
+      "category": "stretchoid",
+      "cidr": "141.98.0.0/16",
+      "verdict": "quarantined",
+      "reason": "Grossly overbroad: RIPE allocates this /16 to Open Fiber S.p.A. (Italian telecom). Blocking it jails Italian ISP infrastructure.",
+      "source": "https://rdap.db.ripe.net/ip/141.98.0.0"
+    },
+    {
+      "category": "stretchoid",
+      "cidr": "194.26.29.0/24",
+      "verdict": "quarantined",
+      "reason": "Stretchoid publishes no scanner ranges; classification rests on community reputation plus RIR allocation (Media Land LLC), which the audit bar rejects as proof.",
+      "source": "https://rdap.db.ripe.net/ip/194.26.29.0"
+    },
+    {
+      "category": "stretchoid",
+      "cidr": "194.135.25.0/24",
+      "verdict": "quarantined",
+      "reason": "Same standard as 194.26.29.0/24: no primary documentation of scanner role (Big-Data-Host LLC allocation).",
+      "source": "https://rdap.db.ripe.net/ip/194.135.25.0"
+    },
+    {
+      "category": "rapid7_sonar",
+      "cidr": "71.6.216.224/27",
+      "verdict": "quarantined",
+      "reason": "Not in Rapid7's officially published Sonar scan ranges; historical CariNet space.",
+      "source": "https://sonardata.rapid7.com/about"
+    },
+    {
+      "category": "rapid7_sonar",
+      "cidr": "71.6.232.0/24",
+      "verdict": "quarantined",
+      "reason": "Adjacent to but absent from Rapid7's published Sonar ranges (71.6.233.0/24).",
+      "source": "https://sonardata.rapid7.com/about"
+    },
+    {
+      "category": "rapid7_sonar",
+      "cidr": "146.185.183.0/24",
+      "verdict": "quarantined",
+      "reason": "DigitalOcean AMS-3 multi-tenant VPS space, not Rapid7 infrastructure.",
+      "source": "https://rdap.db.ripe.net/ip/146.185.183.0"
+    },
+    {
+      "category": "rapid7_sonar",
+      "cidr": "2604:a880::/32",
+      "verdict": "quarantined",
+      "reason": "DigitalOcean's global IPv6 allocation (2^96 addresses of general cloud hosting); attributing it to Rapid7 Sonar blackholes DigitalOcean egress outright.",
+      "source": "https://rdap.arin.net/registry/ip/2604:a880::"
+    },
+    {
+      "category": "cortex_xpanse",
+      "cidr": "144.86.174.0/24",
+      "verdict": "quarantined",
+      "reason": "Absent from Xpanse's published scanning-activity ranges; likely tenant-specific Attack Surface Testing space (dynamically assigned per customer console).",
+      "source": "https://cortex-docs.paloaltonetworks.com/cortex-xpanse/reference/scanning-activity.md"
+    },
+    {
+      "category": "cortex_xpanse",
+      "cidr": "144.86.175.0/24",
+      "verdict": "quarantined",
+      "reason": "Absent from Xpanse's published scanning-activity ranges (same standard as 144.86.174.0/24).",
+      "source": "https://cortex-docs.paloaltonetworks.com/cortex-xpanse/reference/scanning-activity.md"
+    },
+    {
+      "category": "cortex_xpanse",
+      "cidr": "199.30.26.0/24",
+      "verdict": "quarantined",
+      "reason": "Legacy pre-acquisition Expanse Inc. allocation, absent from current official scanning ranges.",
+      "source": "https://cortex-docs.paloaltonetworks.com/cortex-xpanse/reference/scanning-activity.md"
+    },
+    {
+      "category": "cortex_xpanse",
+      "cidr": "199.30.27.0/24",
+      "verdict": "quarantined",
+      "reason": "Legacy pre-acquisition Expanse Inc. allocation, absent from current official scanning ranges.",
+      "source": "https://cortex-docs.paloaltonetworks.com/cortex-xpanse/reference/scanning-activity.md"
+    },
+    {
+      "category": "commercial_telemetry",
+      "cidr": "ALL (51.255.45.0/24, 65.154.226.0/24, 108.61.165.0/24, 178.32.79.0/24, 185.82.202.0/24, 185.163.109.0/24, 185.180.14.0/24, 194.72.238.0/24, 194.106.56.0/24, 195.188.87.0/24, 198.147.22.0/24, 209.126.126.0/24)",
+      "verdict": "quarantined",
+      "reason": "None of these is a telemetry/tracking endpoint. They are whole-provider allocations (OVH, Vultr, Virgin Media, BT, TalkTalk, Total Server Solutions, velia.net, Host Sailor, M247, CDN77) - blocking them outbound breaks ordinary traffic against the stated goal. 65.154.226.0/24 is a Palo Alto Networks assignment but does not appear in Xpanse's published scanning ranges, so it too is quarantined under the primary-source bar. No outbound tracking endpoint can be established from this category; see data/outbound_blocks.json (intentionally empty pending per-endpoint evidence).",
+      "source": "https://rdap.db.ripe.net/ip/195.188.87.0"
+    },
+    {
+      "category": "hostile_probers",
+      "cidr": "45.143.203.0/24",
+      "verdict": "quarantined",
+      "reason": "Community-reputation classification of a Russian VPS range (Global Internet Solutions); no primary documentation of dedicated hostile exploitation.",
+      "source": "https://rdap.db.ripe.net/ip/45.143.203.0"
+    },
+    {
+      "category": "hostile_probers",
+      "cidr": "45.155.205.0/24",
+      "verdict": "quarantined",
+      "reason": "Cloud.ru/SberCloud multi-tenant allocation; whole-provider attribution.",
+      "source": "https://rdap.db.ripe.net/ip/45.155.205.0"
+    },
+    {
+      "category": "hostile_probers",
+      "cidr": "185.156.73.0/24",
+      "verdict": "quarantined",
+      "reason": "Intellekt Ltd VPS range classified by community reputation only; no primary scanner documentation.",
+      "source": "https://rdap.db.ripe.net/ip/185.156.73.0"
+    },
+    {
+      "category": "hostile_probers",
+      "cidr": "185.220.101.0/24",
+      "verdict": "quarantined",
+      "reason": "Tor exit relay fleet (321 active exits per Tor directory consensus, AS60729). Blocking it would misclassify a transit anonymity network as hostile infrastructure; any decision to drop Tor exits must be a separate, explicit policy fed from Tor's published exit list, not a static hostile-prober entry.",
+      "source": "https://onionoo.torproject.org/details?search=185.220.101."
+    },
+    {
+      "category": "hostile_probers",
+      "cidr": "89.248.165.0/24",
+      "verdict": "reclassified",
+      "moved_to": "research_scanners",
+      "reason": "Operator's own RIPE remarks identify this as the Recyber research scanner netblock - primary self-description of scanner role; moved from hostile_probers to research_scanners.",
+      "source": "https://rdap.db.ripe.net/ip/89.248.165.0"
+    },
+    {
+      "category": "hostile_probers",
+      "cidr": "193.163.125.0/24",
+      "verdict": "reclassified",
+      "moved_to": "research_scanners",
+      "reason": "Driftnet Ltd internet-measurement scanner per its own RIPE remarks; moved from hostile_probers to research_scanners.",
+      "source": "https://rdap.db.ripe.net/ip/193.163.125.0"
+    }
+  ],
+  "summary": {
+    "original_cidrs": 60,
+    "retained_as_is": 0,
+    "narrowed": 2,
+    "reclassified": 2,
+    "quarantined": 56,
+    "newly_added_official": [
+      "71.6.233.0/24",
+      "66.228.41.127/32",
+      "45.79.190.10/32",
+      "66.175.212.77/32",
+      "173.255.225.139/32"
+    ]
+  }
+}

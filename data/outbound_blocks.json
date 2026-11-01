@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "scope": "outbound",
+  "description": "Independently reviewed dedicated outbound tracking / spyware C2 endpoints. Each entry requires a dedicated public endpoint (exact /32 or /128, not shared hosting or a cloud prefix) plus verifiable evidence that THIS endpoint collects outbound telemetry. Empty targets is the correct state until such attribution is demonstrated - do not seed this file from ingress scanner lists.",
+  "reviewed_at": "2026-11-01",
+  "targets": {}
+}
