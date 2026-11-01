@@ -23,7 +23,7 @@ printf '%s\n' "$CUR" | sort -u -o "$SEEN"
 COUNT="$(printf '%s\n' "$NEW" | wc -l)"
 SAMPLE="$(printf '%s\n' "$NEW" | head -6 | tr '\n' ' ')"
 
-notify-send -u critical -t 0 \
+notify-send -u critical -t 5000 \
     "730xd egress shadow: ${COUNT} new destination(s)" \
     "${SAMPLE}
 
