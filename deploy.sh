@@ -266,9 +266,9 @@ if [ -f /etc/countersurveillance/egress.mode ]; then
     . /etc/countersurveillance/egress.mode
     export STRICT_EGRESS STRICT_ALLOW_WEB STRICT_LOG_DROPS
 fi
-sudo -n env STRICT_EGRESS="${STRICT_EGRESS:-0}" \
-    STRICT_ALLOW_WEB="${STRICT_ALLOW_WEB:-0}" \
-    STRICT_LOG_DROPS="${STRICT_LOG_DROPS:-1}" \
+sudo -n env STRICT_EGRESS="\${STRICT_EGRESS:-0}" \
+    STRICT_ALLOW_WEB="\${STRICT_ALLOW_WEB:-0}" \
+    STRICT_LOG_DROPS="\${STRICT_LOG_DROPS:-1}" \
     ./deploy.sh ${SUB_CMD}
 
 # Disarm watchdog on success
