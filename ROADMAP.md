@@ -50,3 +50,13 @@
   - [x] Implement 5-step fully automatic standalone deployment pipeline in `install.sh` and `deploy.sh` (`clean_slate_reset` -> ChronoSink daemon -> in-kernel filter -> daily refresh timer -> full diagnostics)
   - [x] Support sub-commands (`filter`, `local-daemon`, `install-refresh`, `remote`, `uninstall`) across `install.sh` and `deploy.sh`
   - [x] Update documentation and operational runbooks for zero-flag turnkey node provisioning
+
+- [x] **Phase 10: Hardened Watchdogs, Systemd Sandboxing & Recovery Mechanisms**
+  - [x] Detached watchdog immune to SIGHUP with disarm file flag preventing race conditions in `deploy.sh`
+  - [x] Initialized rollback target on clean-slate and fresh installs guaranteeing clean table deletion on failure
+  - [x] Logrotate configurations for ChronoSink JSONL alerts and kernel egress drop logs
+  - [x] Sticky bit (1777) permissions on `/opt/qihse-data/events` for unprivileged ChronoSink append
+  - [x] Systemd sandboxing hardening (`DynamicUser=yes`, `ProtectKernelModules=true`, `MemoryDenyWriteExecute=true`, `RestrictRealtime=true`, `RestrictNamespaces=true`)
+  - [x] Non-fatal WireGuard handshake verification in `verify.sh` avoiding false rollback triggers
+  - [x] Full purge teardown in `uninstall.sh` (mangled tables, WireGuard units, and directory artifacts)
+  - [x] Pre-deployment backup restoration or hostname-detected standard OS firewall restoration in `uninstall.sh`

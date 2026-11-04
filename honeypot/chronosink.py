@@ -29,6 +29,11 @@ LOG_DIR = "/var/log/chronosink"
 # Citadel Shield Telemetry Target
 CITADEL_HOST = os.getenv("CITADEL_HOST", "192.168.1.91")
 CITADEL_PORT = int(os.getenv("CITADEL_PORT", "17872"))
+QIHSE_EVENTS_FILE = os.getenv("QIHSE_EVENTS_FILE", "/opt/qihse-data/events/countersurveillance_alerts.jsonl")
+
+# Concurrency limiters
+HTTP_SEMAPHORE = asyncio.Semaphore(128)
+RAW_SEMAPHORE = asyncio.Semaphore(128)
 
 # Retro temporal constants
 RETRO_SERVER = "Apache/1.3.27 (Unix) mod_ssl/2.8.12 OpenSSL/0.9.6b"
@@ -45,7 +50,7 @@ def build_static_bomb() -> bytes:
 
 STATIC_BOMB = build_static_bomb()
 
-def log_event(event_type: str, src_ip: str, src_port: int, dst_port: int, details: dict):
+def _write_event_files(event_type: str, src_ip: str, src_port: int, dst_port: int, details: dict):
     global LOG_FILE, LOG_DIR
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
@@ -68,6 +73,33 @@ def log_event(event_type: str, src_ip: str, src_port: int, dst_port: int, detail
     except Exception as e:
         print(f"[ERROR] Failed to log event: {e}", file=sys.stderr)
 
+    # QIHSE event bus parity: append alerts if directory exists
+    try:
+        qihse_events_file = os.getenv("QIHSE_EVENTS_FILE", "/opt/qihse-data/events/countersurveillance_alerts.jsonl")
+        qihse_dir = os.path.dirname(qihse_events_file)
+        if os.path.isdir(qihse_dir):
+            now = datetime.datetime.now(datetime.timezone.utc)
+            qihse_alert = {
+                "timestamp": now.timestamp(),
+                "iso_time": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "node": socket.gethostname(),
+                "event_type": "countersurveillance.blocked",
+                "category": "SECURITY_SURVEILLANCE",
+                "target": src_ip,
+                "port": dst_port,
+                "process": "chronosink",
+                "pid": os.getpid(),
+                "count": 1,
+                "action": "MITIGATED"
+            }
+            with open(qihse_events_file, "a") as f:
+                f.write(json.dumps(qihse_alert) + "\n")
+    except Exception as e:
+        print(f"[ERROR] Failed to append QIHSE alert: {e}", file=sys.stderr)
+
+async def log_event(event_type: str, src_ip: str, src_port: int, dst_port: int, details: dict):
+    await asyncio.to_thread(_write_event_files, event_type, src_ip, src_port, dst_port, details)
+
     # Forward alert datagram to Citadel Shield on :17872
     try:
         payload = json.dumps({
@@ -84,98 +116,105 @@ def log_event(event_type: str, src_ip: str, src_port: int, dst_port: int, detail
     except Exception:
         pass
 
-async def handle_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, bind_port: int):
-    peer = writer.get_extra_info('peername')
-    if not peer:
-        writer.close()
-        return
-    client_ip, client_port = peer[0], peer[1]
-
-    try:
-        # Read HTTP request header up to 8KB
-        header_data = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5.0)
-        decoded = header_data.decode('latin-1', errors='replace').split("\r\n")
-        req_line = decoded[0] if decoded else ""
-        headers = {}
-        for line in decoded[1:]:
-            if ": " in line:
-                k, v = line.split(": ", 1)
-                headers[k.lower()] = v
-
-        log_event("HTTP_REQUEST", client_ip, client_port, bind_port, {
-            "request_line": req_line,
-            "user_agent": headers.get("user-agent", ""),
-            "host": headers.get("host", ""),
-            "accept_encoding": headers.get("accept-encoding", "")
-        })
-
-        # Artificial temporal jitter (0.3s - 1.5s delay)
-        await asyncio.sleep(random.uniform(0.3, 1.5))
-
-        accept_enc = headers.get("accept-encoding", "")
-        if "gzip" in accept_enc:
-            # Deliver the Gzip decompression bomb
-            resp_headers = (
-                "HTTP/1.1 200 OK\r\n"
-                f"Date: {RETRO_DATE}\r\n"
-                f"Server: {RETRO_SERVER}\r\n"
-                f"Last-Modified: {RETRO_MODIFIED}\r\n"
-                "Content-Type: text/html\r\n"
-                "Content-Encoding: gzip\r\n"
-                f"Content-Length: {len(STATIC_BOMB)}\r\n"
-                "Connection: close\r\n"
-                "\r\n"
-            )
-            writer.write(resp_headers.encode('latin-1') + STATIC_BOMB)
-        else:
-            # Tarpit response with 403 and past date
-            body = "<html><head><title>403 Forbidden</title></head><body><h1>Forbidden</h1><p>Directory traversal rejected.</p></body></html>\r\n"
-            resp_headers = (
-                "HTTP/1.1 403 Forbidden\r\n"
-                f"Date: {RETRO_DATE}\r\n"
-                f"Server: {RETRO_SERVER}\r\n"
-                "Content-Type: text/html\r\n"
-                f"Content-Length: {len(body)}\r\n"
-                "Connection: close\r\n"
-                "\r\n"
-            )
-            writer.write((resp_headers + body).encode('latin-1'))
-
-        await writer.drain()
-    except Exception:
-        pass
-    finally:
-        try:
+async def handle_http_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, bind_port: int):
+    async with HTTP_SEMAPHORE:
+        peer = writer.get_extra_info('peername')
+        if not peer:
             writer.close()
-            await writer.wait_closed()
+            return
+        client_ip, client_port = peer[0], peer[1]
+
+        try:
+            # Read HTTP request header up to 8KB
+            header_data = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5.0)
+            decoded = header_data.decode('latin-1', errors='replace').split("\r\n")
+            req_line = decoded[0] if decoded else ""
+            headers = {}
+            for line in decoded[1:]:
+                if ": " in line:
+                    k, v = line.split(": ", 1)
+                    headers[k.lower()] = v
+
+            await log_event("HTTP_REQUEST", client_ip, client_port, bind_port, {
+                "request_line": req_line,
+                "user_agent": headers.get("user-agent", ""),
+                "host": headers.get("host", ""),
+                "accept_encoding": headers.get("accept-encoding", "")
+            })
+
+            # Artificial temporal jitter (0.3s - 1.5s delay)
+            await asyncio.sleep(random.uniform(0.3, 1.5))
+
+            accept_enc = headers.get("accept-encoding", "")
+            if "gzip" in accept_enc:
+                # Deliver the Gzip decompression bomb
+                resp_headers = (
+                    "HTTP/1.1 200 OK\r\n"
+                    f"Date: {RETRO_DATE}\r\n"
+                    f"Server: {RETRO_SERVER}\r\n"
+                    f"Last-Modified: {RETRO_MODIFIED}\r\n"
+                    "Content-Type: text/html\r\n"
+                    "Content-Encoding: gzip\r\n"
+                    f"Content-Length: {len(STATIC_BOMB)}\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                )
+                writer.write(resp_headers.encode('latin-1') + STATIC_BOMB)
+            else:
+                # Tarpit response with 403 and past date
+                body = "<html><head><title>403 Forbidden</title></head><body><h1>Forbidden</h1><p>Directory traversal rejected.</p></body></html>\r\n"
+                resp_headers = (
+                    "HTTP/1.1 403 Forbidden\r\n"
+                    f"Date: {RETRO_DATE}\r\n"
+                    f"Server: {RETRO_SERVER}\r\n"
+                    "Content-Type: text/html\r\n"
+                    f"Content-Length: {len(body)}\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                )
+                writer.write((resp_headers + body).encode('latin-1'))
+
+            await asyncio.wait_for(writer.drain(), timeout=5.0)
         except Exception:
             pass
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+handle_http = handle_http_client
 
 async def handle_raw_tcp(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, bind_port: int):
-    peer = writer.get_extra_info('peername')
-    if not peer:
-        writer.close()
-        return
-    client_ip, client_port = peer[0], peer[1]
-
-    try:
-        # Read initial banner probe payload
-        raw_payload = await asyncio.wait_for(reader.read(2048), timeout=4.0)
-        log_event("RAW_TCP_PROBE", client_ip, client_port, bind_port, {
-            "bytes_received": len(raw_payload),
-            "hex_preview": raw_payload.hex()[:256]
-        })
-
-        # Tarpit: keep connection open for 15s before closing to exhaust scanner threads
-        await asyncio.sleep(15.0)
-    except Exception:
-        pass
-    finally:
-        try:
+    async with RAW_SEMAPHORE:
+        peer = writer.get_extra_info('peername')
+        if not peer:
             writer.close()
-            await writer.wait_closed()
+            return
+        client_ip, client_port = peer[0], peer[1]
+
+        try:
+            # Read initial banner probe payload
+            raw_payload = await asyncio.wait_for(reader.read(2048), timeout=4.0)
+            if not raw_payload:
+                return
+
+            await log_event("RAW_TCP_PROBE", client_ip, client_port, bind_port, {
+                "bytes_received": len(raw_payload),
+                "hex_preview": raw_payload.hex()[:256]
+            })
+
+            # Tarpit: keep connection open for 15s before closing to exhaust scanner threads
+            await asyncio.sleep(15.0)
         except Exception:
             pass
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
 
 async def main():
     servers = []
@@ -193,7 +232,7 @@ async def main():
     for port in LISTEN_HTTP_PORTS:
         try:
             srv = await asyncio.start_server(
-                lambda r, w, p=port: handle_http(r, w, p),
+                lambda r, w, p=port: handle_http_client(r, w, p),
                 "0.0.0.0", port
             )
             servers.append(srv)

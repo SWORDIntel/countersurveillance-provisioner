@@ -124,6 +124,23 @@ class PolicyTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises((ValueError, TypeError)):
                 self.load(manifest("ingress", {"x": value}))
 
+    def test_ingress_rejects_non_global_or_reserved(self):
+        base = record()
+        variants = [
+            {**base, "ipv4": ["10.0.0.0/8"]},
+            {**base, "ipv4": ["192.168.1.0/24"]},
+            {**base, "ipv4": ["127.0.0.1/32"]},
+            {**base, "ipv4": ["224.0.0.1/32"]},
+            {**base, "ipv4": ["169.254.1.1/32"]},
+            {**base, "ipv6": ["::1/128"]},
+            {**base, "ipv6": ["fe80::1/64"]},
+            {**base, "ipv6": ["fc00::/7"]},
+            {**base, "ipv6": ["ff02::1/128"]},
+        ]
+        for value in variants:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.load(manifest("ingress", {"x": value}))
+
     def test_outbound_requires_exact_public_dedicated_endpoint_and_evidence(self):
         base = record(["93.184.216.34/32"], ["2001:4860:1111::dead/128"],
                       category="tracking", dedicated=True, evidence="Synthetic fixture")
@@ -204,6 +221,22 @@ class PolicyTests(unittest.TestCase):
 
     def test_collapse_does_not_change_coverage(self):
         self.assertEqual(policy.collapse_and_clean(["162.142.125.0/25", "162.142.125.128/25"], policy.ipaddress.ip_network), ["162.142.125.0/24"])
+        # Preserves IPv6 /32 allocations while stripping /128 host masks and /32 IPv4 host masks
+        self.assertEqual(policy.collapse_and_clean(["2001:db8::/32"], policy.ipaddress.ip_network), ["2001:db8::/32"])
+        self.assertEqual(policy.collapse_and_clean(["2001:db8::1/128"], policy.ipaddress.ip_network), ["2001:db8::1"])
+        self.assertEqual(policy.collapse_and_clean(["1.2.3.4/32"], policy.ipaddress.ip_network), ["1.2.3.4"])
+
+    def test_ingress_scanner_overlapping_essential_egress_rejected(self):
+        # 1.1.1.1 is in ESSENTIAL_EGRESS_V4; an ingress scanner covering it must be rejected
+        ingress = manifest("ingress", {"fixture": record(["1.1.1.0/24"])})
+        with self.assertRaises(ValueError):
+            render(self.directory, ingress)
+
+    def test_outbound_blocks_collapsed_and_cleaned(self):
+        base = record(["93.184.216.34/32"],
+                      category="tracking", dedicated=True, evidence="Synthetic fixture")
+        text = render(self.directory, outbound=manifest("outbound", {"x": base}))
+        self.assertIn("elements = { 93.184.216.34 }", text)
 
     def test_jump_desktop_specifically_allowed(self):
         text = render(self.directory, strict=True, web=False, logging=True)
@@ -211,21 +244,56 @@ class PolicyTests(unittest.TestCase):
         out = chain(text, "output")
         fwd = chain(text, "forward")
 
-        # Inbound Jump Desktop Fluid and P2P ports must be accepted
+        # Inbound Jump Desktop Fluid and P2P ports must be accepted (dport only)
         self.assertIn("tcp dport 5273 counter accept", inp)
-        self.assertIn("tcp sport 5273 counter accept", inp)
+        self.assertNotIn("tcp sport 5273 counter accept", inp)
         self.assertIn("udp dport { 5273, 35384-45385 } counter accept", inp)
-        self.assertIn("udp sport { 5273, 35384-45385 } counter accept", inp)
+        self.assertNotIn("udp sport { 5273, 35384-45385 } counter accept", inp)
+        self.assertNotIn("sport 5273", inp)
 
-        # Output Jump Desktop rules (Fluid + P2P range)
+        # Output Jump Desktop rules (Fluid + P2P range, dport only)
         self.assertIn("tcp dport 5273 counter accept", out)
-        self.assertIn("tcp sport 5273 counter accept", out)
+        self.assertNotIn("tcp sport 5273 counter accept", out)
         self.assertIn("35384-45385", out)
 
         # Forward Jump Desktop transit
         self.assertIn("tcp dport 5273 accept", fwd)
         self.assertIn("tcp sport 5273 accept", fwd)
         self.assertIn("35384-45385", fwd)
+
+    def test_dynamic_scanners_sets_and_tarpit(self):
+        text = render(self.directory)
+        self.assertIn("size 32768", text)
+        self.assertIn("flags dynamic,timeout", text)
+
+        inp = chain(text, "input")
+        # Dead tarpit fix: redirected scanner traffic accepted before drop
+        self.assertIn("ip saddr @dynamic_scanners_v4 tcp dport { 9080, 9445 } counter accept", inp)
+        self.assertIn("ip6 saddr @dynamic_scanners_v6 tcp dport { 9080, 9445 } counter accept", inp)
+        self.assertLess(inp.index("dport { 9080, 9445 }"), inp.index("jump ingress_jail_drop"))
+
+        # Decoy traps exclude essential egress and do not exclude vmbr*
+        self.assertIn("ip saddr != @essential_egress_v4", inp)
+        self.assertIn("ip6 saddr != @essential_egress_v6", inp)
+        self.assertNotIn('"vmbr*"', inp)
+
+        # ICMPv6 extension headers traversal
+        self.assertIn("meta l4proto ipv6-icmp icmpv6 type echo-request limit rate 5/second accept", inp)
+        self.assertIn("meta l4proto ipv6-icmp icmpv6 type echo-request counter drop", inp)
+
+    def test_proxmox_transit_rules(self):
+        text = render(self.directory)
+        fwd = chain(text, "forward")
+        self.assertIn('iifname != "vmbr*" oifname "vmbr*" tcp dport { 3128, 8006 } drop', fwd)
+        self.assertIn('oifname != "vmbr*" tcp dport { 3128, 8006 } drop', fwd)
+        self.assertIn('iifname != "vmbr*" oifname "vmbr*" udp dport { 5404, 5405 } drop', fwd)
+        self.assertIn('oifname != "vmbr*" udp dport { 5404, 5405 } drop', fwd)
+
+    def test_redirected_honeypot_ports_accepted_before_dynamic_scanner_jail(self):
+        text = render(self.directory)
+        inp = chain(text, "input")
+        self.assertIn("tcp dport { 9080, 9445 }", inp)
+        self.assertLess(inp.index("tcp dport { 9080, 9445 }"), inp.index("jump ingress_jail_drop"))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,8 @@
+/var/log/chronosink/*.jsonl /opt/qihse-data/events/*.jsonl {
+    rotate 7
+    size 50M
+    compress
+    copytruncate
+    missingok
+    notifempty
+}

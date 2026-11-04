@@ -60,11 +60,46 @@ clean_slate_reset() {
     echo -e "${G}[+] Clean-slate reset complete.${NC}"
 }
 
+ensure_event_dirs() {
+    sudo mkdir -p /opt/chronosink /var/log/chronosink /etc/chronosink /opt/qihse-data/events
+    sudo chmod 1777 /opt/qihse-data/events 2>/dev/null || true
+    sudo chmod 1777 /var/log/chronosink 2>/dev/null || true
+}
+
+install_logrotate() {
+    echo "[*] Installing logrotate definitions..."
+    sudo mkdir -p /etc/logrotate.d
+
+    cat <<'EOF' | sudo tee /etc/logrotate.d/chronosink >/dev/null
+/var/log/chronosink/*.jsonl /opt/qihse-data/events/*.jsonl {
+    rotate 7
+    size 50M
+    compress
+    copytruncate
+    missingok
+    notifempty
+}
+EOF
+    sudo chmod 0644 /etc/logrotate.d/chronosink
+
+    cat <<'EOF' | sudo tee /etc/logrotate.d/cs-egress-drops >/dev/null
+/var/log/cs-egress-drops.log {
+    rotate 14
+    size 100M
+    compress
+    copytruncate
+    missingok
+    notifempty
+}
+EOF
+    sudo chmod 0644 /etc/logrotate.d/cs-egress-drops
+}
+
 deploy_chronosink_daemon() {
     echo -e "\n${CY}=== Step 2: Deploying ChronoSink Go Daemon on Local Host ===${NC}"
 
-    sudo mkdir -p /opt/chronosink /var/log/chronosink /etc/chronosink /opt/qihse-data/events
-    sudo chmod 777 /opt/qihse-data/events 2>/dev/null || true
+    ensure_event_dirs
+    install_logrotate
     ARCH=$(uname -m)
     BIN_SOURCE="${SCRIPT_DIR}/honeypot/bin/chronosink-linux-amd64"
     if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
@@ -95,6 +130,8 @@ EOF
 
 deploy_filter() {
     echo -e "\n${CY}=== Step 3: Deploying In-Kernel Packet Filter (with Watchdog) ===${NC}"
+    ensure_event_dirs
+    install_logrotate
     python3 "${SCRIPT_DIR}/tools/update_blacklist.py"
 
     echo "[*] Preflight syntax validation..."
@@ -103,7 +140,7 @@ deploy_filter() {
     sudo mkdir -p /etc/nftables.d
     BACKUP_FILE="/etc/nftables.d/countersurveillance.nft.bak.$(date +%Y%m%d%H%M%S)"
 
-    # Backup existing table if active.
+    # Backup existing table if active, or initialize clean rollback target.
     # The dump must start with a table reset: replaying a bare dump onto a live
     # table only appends rules, it does not restore the previous state.
     if sudo nft list table inet countersurveillance >/dev/null 2>&1; then
@@ -112,14 +149,24 @@ deploy_filter() {
             printf 'table inet countersurveillance\ndelete table inet countersurveillance\n'
             sudo nft list table inet countersurveillance
         } | sudo tee "${BACKUP_FILE}" >/dev/null
+    else
+        echo "[*] Initializing rollback target for clean deletion..."
+        printf 'table inet countersurveillance\ndelete table inet countersurveillance\n' | sudo tee "${BACKUP_FILE}" >/dev/null
     fi
 
-    # Arm Rollback Watchdog (reverts in 25s if verification fails)
-    WATCHDOG_PID=""
-    if [ -f "${BACKUP_FILE}" ]; then
-        (sleep 25 && sudo nft -f "${BACKUP_FILE}" 2>/dev/null && echo -e "\n${R}[!] Rollback Watchdog fired due to verification timeout!${NC}") &
-        WATCHDOG_PID=$!
-    fi
+    # Arm Rollback Watchdog (detached, immune to SIGHUP, disarm file flag)
+    WATCHDOG_DISARM="/tmp/cs_watchdog_disarm.$$"
+    rm -f "$WATCHDOG_DISARM"
+    (
+        trap '' HUP
+        sleep 60
+        if [ ! -f "$WATCHDOG_DISARM" ]; then
+            sudo nft -f "$BACKUP_FILE" 2>/dev/null || true
+            logger -t cs-watchdog "Rollback watchdog fired after timeout"
+        fi
+        rm -f "$WATCHDOG_DISARM" "$BACKUP_FILE"
+    ) </dev/null >/dev/null 2>&1 &
+    WATCHDOG_PID=$!
 
     echo "[*] Installing ruleset and restarting service..."
     sudo cp "${CONFIG_NFT}" /etc/nftables.d/countersurveillance.nft
@@ -131,9 +178,10 @@ deploy_filter() {
 
     echo "[*] Running post-deployment verification..."
     if bash "${VERIFY_SCRIPT}"; then
-        if [ -n "$WATCHDOG_PID" ]; then
-            kill "$WATCHDOG_PID" 2>/dev/null || true
-        fi
+        touch "$WATCHDOG_DISARM"
+        kill "$WATCHDOG_PID" 2>/dev/null || true
+        sudo rm -f "$BACKUP_FILE" "$WATCHDOG_DISARM" 2>/dev/null || true
+
         # Record the node's egress mode so the refresh timer redeploys with the
         # same policy instead of silently downgrading a strict node to accept.
         sudo mkdir -p /etc/countersurveillance
@@ -146,12 +194,13 @@ deploy_filter() {
         echo "[+] Egress mode recorded: $(sudo cat /etc/countersurveillance/egress.mode)"
     else
         echo -e "${R}[-] Verification failed! Reverting ruleset immediately...${NC}"
+        touch "$WATCHDOG_DISARM"
+        kill "$WATCHDOG_PID" 2>/dev/null || true
         if [ -f "${BACKUP_FILE}" ]; then
-            sudo nft -f "${BACKUP_FILE}"
+            sudo nft -f "${BACKUP_FILE}" 2>/dev/null || true
+            sudo rm -f "${BACKUP_FILE}" 2>/dev/null || true
         fi
-        if [ -n "$WATCHDOG_PID" ]; then
-            kill "$WATCHDOG_PID" 2>/dev/null || true
-        fi
+        sudo rm -f "$WATCHDOG_DISARM" 2>/dev/null || true
         exit 1
     fi
 }
@@ -284,21 +333,30 @@ chmod +x install.sh deploy.sh verify.sh uninstall.sh tools/*.sh tools/*.py honey
 echo "[*] Remote preflight syntax validation..."
 sudo -n nft -c -f configs/countersurveillance.nft
 
-# Backup existing table (delete-prefixed so replay restores rather than merges)
+# Backup existing table or initialize clean rollback target
 BACKUP_FILE="/tmp/cs_remote_rollback.nft"
 if sudo -n nft list table inet countersurveillance >/dev/null 2>&1; then
     {
         printf 'table inet countersurveillance\ndelete table inet countersurveillance\n'
         sudo -n nft list table inet countersurveillance
     } | sudo -n tee "\${BACKUP_FILE}" >/dev/null
+else
+    printf 'table inet countersurveillance\ndelete table inet countersurveillance\n' | sudo -n tee "\${BACKUP_FILE}" >/dev/null
 fi
 
-# Arm 30-second Watchdog
-WATCHDOG_PID=""
-if [ -f "\${BACKUP_FILE}" ]; then
-    (sleep 30 && sudo -n nft -f "\${BACKUP_FILE}" 2>/dev/null && echo "[!] Remote watchdog restored previous firewall state.") >/dev/null 2>&1 &
-    WATCHDOG_PID=\$!
-fi
+# Arm Rollback Watchdog (detached, immune to SIGHUP, disarm file flag)
+WATCHDOG_DISARM="/tmp/cs_watchdog_disarm.\$\$"
+rm -f "\${WATCHDOG_DISARM}"
+(
+    trap '' HUP
+    sleep 60
+    if [ ! -f "\${WATCHDOG_DISARM}" ]; then
+        sudo -n nft -f "\${BACKUP_FILE}" 2>/dev/null || true
+        logger -t cs-watchdog "Rollback watchdog fired after timeout"
+    fi
+    rm -f "\${WATCHDOG_DISARM}" "\${BACKUP_FILE}"
+) </dev/null >/dev/null 2>&1 &
+WATCHDOG_PID=\$!
 
 # Execute deployment command. SSH does not forward the operator's env, and
 # the generator's unexported defaults differ from deploy.sh's record step, so
@@ -315,11 +373,10 @@ sudo -n env STRICT_EGRESS="\${STRICT_EGRESS:-0}" \
     ./install.sh ${SUB_CMD}
 
 # Disarm watchdog on success
-if [ -n "\${WATCHDOG_PID}" ]; then
-    kill "\${WATCHDOG_PID}" 2>/dev/null || true
-    sudo -n rm -f "\${BACKUP_FILE}"
-    echo "[✓] Remote deployment successful. Watchdog disarmed."
-fi
+touch "\${WATCHDOG_DISARM}"
+kill "\${WATCHDOG_PID}" 2>/dev/null || true
+sudo -n rm -f "\${BACKUP_FILE}" "\${WATCHDOG_DISARM}" 2>/dev/null || true
+echo "[✓] Remote deployment successful. Watchdog disarmed."
 
 rm -rf /tmp/cs-provisioner
 EOF

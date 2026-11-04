@@ -1,14 +1,15 @@
 [Unit]
 Description=Counter-surveillance domain and network blocklist
-After=network.target
+Before=network-pre.target
+Wants=network-pre.target
+After=local-fs.target
 StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStartPre=-/usr/sbin/nft delete table inet countersurveillance
 ExecStart=/usr/sbin/nft -f /etc/nftables.d/countersurveillance.nft
-ExecReload=/bin/sh -c '/usr/sbin/nft delete table inet countersurveillance 2>/dev/null || true; exec /usr/sbin/nft -f /etc/nftables.d/countersurveillance.nft'
+ExecReload=/usr/sbin/nft -f /etc/nftables.d/countersurveillance.nft
 ExecStop=-/usr/sbin/nft delete table inet countersurveillance
 
 [Install]

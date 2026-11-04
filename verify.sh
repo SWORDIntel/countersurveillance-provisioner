@@ -136,8 +136,7 @@ if command -v wg >/dev/null 2>&1 && [ -n "$(sudo -n wg show interfaces 2>/dev/nu
     if sudo -n wg show all latest-handshakes 2>/dev/null | awk '$2 > 0 {found=1} END {exit !found}'; then
         echo -e "${G}PASS${NC}"
     else
-        echo -e "${R}FAIL${NC} (no recent handshake)"
-        exit 1
+        echo -e "${Y}WARN${NC} (no recent handshake)"
     fi
 fi
 

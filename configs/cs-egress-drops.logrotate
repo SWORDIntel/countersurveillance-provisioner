@@ -1,0 +1,8 @@
+/var/log/cs-egress-drops.log {
+    rotate 14
+    size 100M
+    compress
+    copytruncate
+    missingok
+    notifempty
+}

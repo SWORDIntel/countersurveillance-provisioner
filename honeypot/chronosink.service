@@ -8,6 +8,9 @@ Type=simple
 ExecStart=/opt/chronosink/chronosink
 Restart=always
 RestartSec=3
+User=chronosink
+Group=chronosink
+DynamicUser=yes
 LimitNOFILE=65535
 
 # Configuration files
@@ -20,8 +23,11 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ProtectKernelTunables=true
+ProtectKernelModules=true
 ProtectControlGroups=true
+MemoryDenyWriteExecute=true
 RestrictRealtime=true
+RestrictNamespaces=true
 
 # Resource Boundaries (Prevents Scanner Connection Floods)
 MemoryMax=64M

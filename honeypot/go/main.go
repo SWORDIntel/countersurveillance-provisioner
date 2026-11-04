@@ -37,12 +37,14 @@ const (
 )
 
 var (
-	httpPorts    = []int{9080, 8080, 8443, 80}
-	rawPorts     = []int{9445, 23, 445, 5555, 8291}
-	gzipBomb     []byte
-	hostname     string
-	deceptionMode = "bounded" // "bounded" (default, harmless) or "bomb" (decompression bomb)
-	connLimiter  = make(chan struct{}, MaxConcurrentConnections)
+	httpPorts       = []int{9080, 8080, 8443, 80}
+	rawPorts        = []int{9445, 23, 445, 5555, 8291}
+	gzipBomb        []byte
+	hostname        string
+	deceptionMode   = "bounded" // "bounded" (default, harmless) or "bomb" (decompression bomb)
+	httpConnLimiter = make(chan struct{}, 128)
+	rawConnLimiter  = make(chan struct{}, 128)
+	telemetryChan   = make(chan []byte, 1024)
 )
 
 // EvidenceRecord represents the standardized investigation-grade evidence schema
@@ -186,11 +188,7 @@ func dispatchTelemetry(srcIP string, srcPort int, dstPort int, protocol string, 
 		}
 	}
 
-	// 3. UDP Datagram to Citadel Shield (host:17872)
-	citadelHost := os.Getenv("CITADEL_HOST")
-	if citadelHost == "" {
-		citadelHost = CitadelDefaultHost
-	}
+	// 3. UDP Datagram to Citadel Shield (host:17872) via background worker
 	citMsg := CitadelAlertMsg{
 		Node:   hostname,
 		Target: srcIP,
@@ -199,30 +197,25 @@ func dispatchTelemetry(srcIP string, srcPort int, dstPort int, protocol string, 
 		PID:    os.Getpid(),
 	}
 	if b, err := json.Marshal(citMsg); err == nil {
-		go func(data []byte, host string) {
-			raddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(host, strconv.Itoa(CitadelUDPPort)))
-			if err != nil {
-				return
-			}
-			conn, err := net.DialUDP("udp", nil, raddr)
-			if err != nil {
-				return
-			}
-			defer conn.Close()
-			_ = conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
-			_, _ = conn.Write(data)
-		}(b, citadelHost)
+		select {
+		case telemetryChan <- b:
+		default:
+		}
 	}
 }
 
 func handleHTTP(w http.ResponseWriter, r *http.Request, bindPort int) {
 	// Concurrency bounding
 	select {
-	case connLimiter <- struct{}{}:
-		defer func() { <-connLimiter }()
+	case httpConnLimiter <- struct{}{}:
+		defer func() { <-httpConnLimiter }()
 	default:
-		// Saturated; drop connection to prevent denial of service
-		http.Error(w, "Server Busy", http.StatusServiceUnavailable)
+		// Saturated; drop connection to prevent denial of service with retro Apache 503
+		w.Header().Set("Date", RetroDate)
+		w.Header().Set("Server", RetroServer)
+		w.Header().Set("Connection", "close")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\r\n<html><head><title>503 Service Unavailable</title></head><body><h1>Service Temporarily Unavailable</h1></body></html>\r\n")
 		return
 	}
 
@@ -282,8 +275,8 @@ func handleRawTCP(conn net.Conn, bindPort int) {
 	defer conn.Close()
 
 	select {
-	case connLimiter <- struct{}{}:
-		defer func() { <-connLimiter }()
+	case rawConnLimiter <- struct{}{}:
+		defer func() { <-rawConnLimiter }()
 	default:
 		return
 	}
@@ -294,7 +287,10 @@ func handleRawTCP(conn net.Conn, bindPort int) {
 	// Bounded payload reading
 	_ = conn.SetReadDeadline(time.Now().Add(4 * time.Second))
 	buf := make([]byte, MaxProbePayloadBytes)
-	n, _ := conn.Read(buf)
+	n, err := conn.Read(buf)
+	if n == 0 || err != nil {
+		return // If client disconnected or sent FIN/RST, exit immediately; do NOT sleep 15s against empty sockets!
+	}
 	payload := buf[:n]
 
 	details := map[string]interface{}{
@@ -304,8 +300,14 @@ func handleRawTCP(conn net.Conn, bindPort int) {
 
 	dispatchTelemetry(clientIP, clientPort, bindPort, "tcp", "decoy-raw-tarpit", payload, details)
 
-	// Tarpit socket: bounded hold (15s)
-	time.Sleep(15 * time.Second)
+	// Tarpit socket: drip a single newline every 3 seconds up to 15s to keep client pinned
+	for i := 0; i < 5; i++ {
+		_ = conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
+		if _, err := conn.Write([]byte("\n")); err != nil {
+			return
+		}
+		time.Sleep(3 * time.Second)
+	}
 }
 
 func min(a, b int) int {
@@ -318,6 +320,33 @@ func min(a, b int) int {
 func main() {
 	fmt.Printf("[*] Starting ChronoSink Go Deception Engine on node: %s (Mode: %s)\n", hostname, deceptionMode)
 	fmt.Printf("[*] Concurrency Ceiling: %d connections | Max Payload Capture: %d bytes\n", MaxConcurrentConnections, MaxProbePayloadBytes)
+
+	// Single persistent UDP connection to Citadel Shield worker
+	citadelHost := os.Getenv("CITADEL_HOST")
+	if citadelHost == "" {
+		citadelHost = CitadelDefaultHost
+	}
+	citadelAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(citadelHost, strconv.Itoa(CitadelUDPPort)))
+	var udpConn *net.UDPConn
+	if err != nil {
+		fmt.Printf("[-] Could not resolve Citadel UDP address %s:%d: %v\n", citadelHost, CitadelUDPPort, err)
+	} else {
+		udpConn, err = net.DialUDP("udp", nil, citadelAddr)
+		if err != nil {
+			fmt.Printf("[-] Could not connect to Citadel UDP %s:%d: %v\n", citadelHost, CitadelUDPPort, err)
+		} else {
+			fmt.Printf("[+] Citadel UDP telemetry active -> %s:%d\n", citadelHost, CitadelUDPPort)
+		}
+	}
+
+	go func() {
+		for data := range telemetryChan {
+			if udpConn != nil {
+				_ = udpConn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+				_, _ = udpConn.Write(data)
+			}
+		}
+	}()
 
 	var listeners []io.Closer
 
@@ -374,6 +403,9 @@ func main() {
 
 	if len(listeners) == 0 {
 		fmt.Fprintln(os.Stderr, "[!] No listeners could be bound. Exiting.")
+		if udpConn != nil {
+			_ = udpConn.Close()
+		}
 		os.Exit(1)
 	}
 
@@ -382,6 +414,9 @@ func main() {
 	<-sigChan
 
 	fmt.Println("\n[*] Shutting down ChronoSink...")
+	if udpConn != nil {
+		_ = udpConn.Close()
+	}
 	for _, l := range listeners {
 		_ = l.Close()
 	}
