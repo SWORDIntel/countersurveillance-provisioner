@@ -60,6 +60,13 @@ Production-grade, automated provisioning suite for deploying high-precision, dua
    - Remote deployments via `deploy.sh remote` arm a 30-second kernel rollback watchdog (`(sleep 30 && nft -f backup) &`).
    - If verification fails or connectivity drops, the watchdog automatically restores the prior firewall state, preventing remote hypervisor lockouts.
 
+5. **Jump Desktop Remote Management & Fluid Protocol Compatibility**:
+   - Explicitly permits Jump Desktop Connect and Fluid protocol traffic across all operating modes:
+     - Inbound Fluid listener: `tcp dport 5273` and `udp dport 5273` counter accept
+     - Inbound Direct P2P media streams: `udp dport 35384-45385` and `udp sport 35384-45385` counter accept
+     - Outbound / Forward transit: Unrestricted bidirectional P2P UDP and Fluid TCP/UDP communication
+     - Cloud Signaling & Discovery: Core authentication and rendezvous endpoints (`neuron.jumpdesktop.com`, `api.jumpdesktop.com`, `turn.jumpdesktop.com`, `jumpdesktop.com`) pre-resolved and whitelisted in `@essential_egress_v4/v6`.
+
 ---
 
 ## Directory Structure

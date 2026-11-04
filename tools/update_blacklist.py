@@ -143,6 +143,7 @@ def strict_allowances(allow_web, probe=None):
         '        udp dport { 1025, 41641, 51820, 51821 } counter accept',
         # Jump Desktop Connect: Fluid (TCP/UDP 5273), P2P direct (UDP 35384-45385), RDP (UDP 3389)
         '        tcp dport 5273 counter accept',
+        '        tcp sport 5273 counter accept',
         '        udp dport { 3389, 5273, 35384-45385 } counter accept',
         '        udp sport { 3389, 5273, 35384-45385 } counter accept',
         # DHCP client renewal and lab dnsmasq replies must survive drop policy.
@@ -503,7 +504,9 @@ table inet countersurveillance {{
 
         # Jump Desktop Connect: Direct P2P & Fluid Connect
         tcp dport 5273 counter accept
+        tcp sport 5273 counter accept
         udp dport {{ 5273, 35384-45385 }} counter accept
+        udp sport {{ 5273, 35384-45385 }} counter accept
 
         # F. Management Perimeter Stealth:
         # Strictly require source to be in @trusted_mgmt for sensitive daemons:
@@ -569,6 +572,12 @@ table inet countersurveillance {{
         # Enforce that Proxmox cluster traffic stays strictly on local bridges / LAN
         oifname != "vmbr*" tcp dport {{ 3128, 8006 }} drop
         oifname != "vmbr*" udp dport {{ 5404, 5405 }} drop
+
+        # Jump Desktop Connect Transit & Bridging
+        tcp dport 5273 accept
+        tcp sport 5273 accept
+        udp dport {{ 5273, 35384-45385 }} accept
+        udp sport {{ 5273, 35384-45385 }} accept
 
         ip daddr @essential_egress_v4 accept
         ip6 daddr @essential_egress_v6 accept

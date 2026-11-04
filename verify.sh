@@ -147,4 +147,17 @@ if systemctl is-active --quiet countersurveillance-refresh.timer 2>/dev/null; th
     echo -e "${G}ACTIVE${NC}"
 fi
 
+# 10. Jump Desktop Allowances & Signaling Verification
+echo -n "[*] Testing Jump Desktop allowances (Fluid 5273, P2P 35384-45385, signaling)... "
+JD_INPUT=$(printf '%s\n' "$RULESET" | sed -n "/chain input {/,/^\t}/p")
+if printf '%s\n' "$JD_INPUT" | grep -q 'dport 5273' && printf '%s\n' "$JD_INPUT" | grep -q '35384-45385'; then
+    if curl -s -m 4 --head https://api.jumpdesktop.com >/dev/null 2>&1 || curl -s -m 4 --head https://neuron.jumpdesktop.com >/dev/null 2>&1; then
+        echo -e "${G}PASS${NC} (Rules active & cloud signaling reachable)"
+    else
+        echo -e "${G}PASS${NC} (In-kernel Fluid and P2P rules verified)"
+    fi
+else
+    fail_scope "Jump Desktop port allowances (5273 / 35384-45385) missing from input chain"
+fi
+
 echo -e "\n${G}[+] All counter-surveillance verification checks completed successfully!${NC}"

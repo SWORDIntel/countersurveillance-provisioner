@@ -205,6 +205,28 @@ class PolicyTests(unittest.TestCase):
     def test_collapse_does_not_change_coverage(self):
         self.assertEqual(policy.collapse_and_clean(["162.142.125.0/25", "162.142.125.128/25"], policy.ipaddress.ip_network), ["162.142.125.0/24"])
 
+    def test_jump_desktop_specifically_allowed(self):
+        text = render(self.directory, strict=True, web=False, logging=True)
+        inp = chain(text, "input")
+        out = chain(text, "output")
+        fwd = chain(text, "forward")
+
+        # Inbound Jump Desktop Fluid and P2P ports must be accepted
+        self.assertIn("tcp dport 5273 counter accept", inp)
+        self.assertIn("tcp sport 5273 counter accept", inp)
+        self.assertIn("udp dport { 5273, 35384-45385 } counter accept", inp)
+        self.assertIn("udp sport { 5273, 35384-45385 } counter accept", inp)
+
+        # Output Jump Desktop rules (Fluid + P2P range)
+        self.assertIn("tcp dport 5273 counter accept", out)
+        self.assertIn("tcp sport 5273 counter accept", out)
+        self.assertIn("35384-45385", out)
+
+        # Forward Jump Desktop transit
+        self.assertIn("tcp dport 5273 accept", fwd)
+        self.assertIn("tcp sport 5273 accept", fwd)
+        self.assertIn("35384-45385", fwd)
+
 
 if __name__ == "__main__":
     unittest.main()
