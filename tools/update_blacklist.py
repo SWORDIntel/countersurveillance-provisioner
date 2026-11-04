@@ -36,6 +36,9 @@ TRUSTED_MGMT_V4 = [
     "192.168.0.0/16",
     "100.64.0.0/10",    # CGNAT / Tailscale
     "169.254.0.0/16",   # Link-local
+    # Operator SSH tunnel & proxy endpoints
+    "89.169.111.62/32",
+    "144.126.248.239/32",
 ]
 
 TRUSTED_MGMT_V6 = [
@@ -138,6 +141,10 @@ def strict_allowances(allow_web, probe=None):
         # 41641 Tailscale, 1025 observed spoke peer). Without this, strict
         # mode severs hc-backup/hc-mgmt/Tailscale handshakes.
         '        udp dport { 1025, 41641, 51820, 51821 } counter accept',
+        # Jump Desktop Connect: Fluid (TCP/UDP 5273), P2P direct (UDP 35384-45385), RDP (UDP 3389)
+        '        tcp dport 5273 counter accept',
+        '        udp dport { 3389, 5273, 35384-45385 } counter accept',
+        '        udp sport { 3389, 5273, 35384-45385 } counter accept',
         # DHCP client renewal and lab dnsmasq replies must survive drop policy.
         '        udp sport 68 udp dport 67 accept',
         '        udp sport 67 udp dport 68 accept',
@@ -487,16 +494,26 @@ table inet countersurveillance {{
         ip6 saddr @blocked_v6 jump ingress_scanner_drop
 
         # E. Decoy Port Traps: Auto-jail external probes into dynamic sets
-        # Excludes loopback and authorized management subnets from self-jailing
-        iifname != "lo" ip saddr != @trusted_mgmt_v4 tcp dport {{ 23, 445, 5555, 8291 }} add @dynamic_scanners_v4 {{ ip saddr }} counter drop
-        iifname != "lo" ip6 saddr != @trusted_mgmt_v6 tcp dport {{ 23, 445, 5555, 8291 }} add @dynamic_scanners_v6 {{ ip6 saddr }} counter drop
+        # Excludes loopback, management, tunnels, and local bridges from self-jailing
+        iifname != {{ "lo", "tailscale0", "wg*", "vmbr*", "docker0", "parrot0", "hc-mgmt", "hc-backup" }} ip saddr != @trusted_mgmt_v4 tcp dport {{ 23, 445, 5555, 8291 }} add @dynamic_scanners_v4 {{ ip saddr }} counter drop
+        iifname != {{ "lo", "tailscale0", "wg*", "vmbr*", "docker0", "parrot0", "hc-mgmt", "hc-backup" }} ip6 saddr != @trusted_mgmt_v6 tcp dport {{ 23, 445, 5555, 8291 }} add @dynamic_scanners_v6 {{ ip6 saddr }} counter drop
+
+        # Trusted interface bypass for management, tunnels & cluster mesh
+        iifname {{ "tailscale0", "wg*", "hc-mgmt", "hc-backup" }} accept
+
+        # Jump Desktop Connect: Direct P2P & Fluid Connect
+        tcp dport 5273 counter accept
+        udp dport {{ 5273, 35384-45385 }} counter accept
 
         # F. Management Perimeter Stealth:
         # Strictly require source to be in @trusted_mgmt for sensitive daemons:
         # SSH (22), NFS (111, 2049), Spice (3128), RDP (3389), VNC (5900),
-        # Agent RPC (7778, 7781), Proxmox Web (8006).
+        # Corosync (UDP 5404-5405), Agent RPC (7778, 7781), Proxmox Web (8006).
+        # Proxmox management and cluster traffic stays strictly LAN-only.
         ip saddr != @trusted_mgmt_v4 tcp dport {{ 22, 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006 }} counter drop
         ip6 saddr != @trusted_mgmt_v6 tcp dport {{ 22, 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006 }} counter drop
+        ip saddr != @trusted_mgmt_v4 udp dport {{ 3389, 5404, 5405 }} counter drop
+        ip6 saddr != @trusted_mgmt_v6 udp dport {{ 3389, 5404, 5405 }} counter drop
 
         # G. ICMP Sweep Normalization: Rate-limit echo requests to 5/s
         ip protocol icmp icmp type echo-request limit rate 5/second accept
@@ -541,6 +558,17 @@ table inet countersurveillance {{
         ip daddr @outbound_block_v4 jump forward_drop
         ip6 daddr @outbound_block_v6 jump forward_drop
         ct state established,related accept
+
+        # Inter-node LAN, Proxmox cluster transit, and VM bridges
+        ip saddr @trusted_mgmt_v4 ip daddr @trusted_mgmt_v4 accept
+        ip6 saddr @trusted_mgmt_v6 ip6 daddr @trusted_mgmt_v6 accept
+        iifname "vmbr*" oifname "vmbr*" accept
+        iifname {{ "tailscale0", "wg*" }} accept
+        oifname {{ "tailscale0", "wg*" }} accept
+
+        # Enforce that Proxmox cluster traffic stays strictly on local bridges / LAN
+        oifname != "vmbr*" tcp dport {{ 3128, 8006 }} drop
+        oifname != "vmbr*" udp dport {{ 5404, 5405 }} drop
 
         ip daddr @essential_egress_v4 accept
         ip6 daddr @essential_egress_v6 accept

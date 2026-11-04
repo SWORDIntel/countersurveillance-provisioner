@@ -67,6 +67,7 @@ Production-grade, automated provisioning suite for deploying high-precision, dua
 countersurveillance-provisioner/
 ├── README.md                      # Architecture, usage, and threat model
 ├── ROADMAP.md                     # Implementation milestones & progress
+├── install.sh                     # Clean-slate turnkey installer (undoes/overwrites prior configs first)
 ├── deploy.sh                      # Turnkey runner with atomic rollback watchdog
 ├── verify.sh                      # Post-deployment validation test suite
 ├── uninstall.sh                   # Safe rollback (preserves Proxmox/Docker tables)
@@ -134,6 +135,14 @@ Every probe captured by ChronoSink is logged to `/var/log/chronosink/probes.json
 ---
 
 ## Usage
+
+### 0. Clean-Slate Installation (Recommended for New / Reset Deployments)
+```bash
+./install.sh filter                         # Clean reset & deploy packet filter locally
+./install.sh remote john@192.168.1.90 filter # Clean reset & deploy remotely over SSH
+./install.sh cluster                        # Clean reset & deploy cluster-wide (t420, 730xd, t320)
+```
+`install.sh` acts as an idempotent clean-slate wrapper around `deploy.sh`. Before generating and applying new rules, it explicitly terminates prior services, drops existing `inet countersurveillance` nftables tables, cleans stale backups, and guarantees that updated configurations cleanly overwrite any preexisting configs across local and remote nodes.
 
 ### 1. Deploy In-Kernel Filter (Local Node)
 ```bash

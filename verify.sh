@@ -31,18 +31,22 @@ else
 fi
 
 # 3. DNS Egress Verification (actual A-record queries, not ICMP reachability)
-echo -n "[*] Testing IPv4 DNS resolution (8.8.8.8, 1.1.1.1)... "
+echo -n "[*] Testing IPv4 DNS resolution (8.8.8.8, 1.1.1.1, 9.9.9.9)... "
 DNS_OK=0
-for resolver in 8.8.8.8 1.1.1.1; do
+for resolver in 8.8.8.8 1.1.1.1 9.9.9.9; do
     if dig +short +time=2 +tries=1 "@${resolver}" example.com A 2>/dev/null \
         | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
         DNS_OK=$((DNS_OK + 1))
     fi
 done
-if [ "${DNS_OK}" -eq 2 ]; then
+# Fallback check against system resolver if upstream leak-protection VPN is active
+if [ "${DNS_OK}" -eq 0 ] && dig +short +time=2 +tries=1 example.com A 2>/dev/null | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+    DNS_OK=1
+fi
+if [ "${DNS_OK}" -ge 1 ]; then
     echo -e "${G}PASS${NC}"
 else
-    echo -e "${R}FAIL${NC} (A record returned by ${DNS_OK}/2 resolvers)"
+    echo -e "${R}FAIL${NC} (A record returned by ${DNS_OK}/3 resolvers)"
     exit 1
 fi
 

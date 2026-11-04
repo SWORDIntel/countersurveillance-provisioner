@@ -236,7 +236,7 @@ deploy_remote() {
     ssh "${TARGET}" bash -s << EOF
 set -euo pipefail
 cd /tmp/cs-provisioner
-chmod +x deploy.sh verify.sh uninstall.sh tools/*.sh tools/*.py honeypot/bin/* 2>/dev/null || true
+chmod +x install.sh deploy.sh verify.sh uninstall.sh tools/*.sh tools/*.py honeypot/bin/* 2>/dev/null || true
 
 echo "[*] Remote preflight syntax validation..."
 sudo -n nft -c -f configs/countersurveillance.nft
@@ -269,7 +269,7 @@ fi
 sudo -n env STRICT_EGRESS="\${STRICT_EGRESS:-0}" \
     STRICT_ALLOW_WEB="\${STRICT_ALLOW_WEB:-0}" \
     STRICT_LOG_DROPS="\${STRICT_LOG_DROPS:-1}" \
-    ./deploy.sh ${SUB_CMD}
+    ./install.sh ${SUB_CMD}
 
 # Disarm watchdog on success
 if [ -n "\${WATCHDOG_PID}" ]; then
@@ -316,9 +316,14 @@ case "$1" in
     cluster)
         echo -e "${CY}[*] Starting cluster-wide counter-surveillance deployment...${NC}"
         deploy_filter
-        deploy_remote "john@192.168.1.90" filter
-        deploy_remote "john@192.168.1.95" filter
-        echo -e "\n${G}[+] All cluster nodes successfully provisioned!${NC}"
+        for node in "john@192.168.1.90" "john@192.168.1.95"; do
+            if ssh -o BatchMode=yes -o ConnectTimeout=4 "$node" "true" 2>/dev/null; then
+                deploy_remote "$node" filter
+            else
+                echo -e "${Y}[!] Cluster node $node is currently unreachable (offline/maintenance). Skipping.${NC}"
+            fi
+        done
+        echo -e "\n${G}[+] Cluster provisioning finished!${NC}"
         ;;
     *)
         usage

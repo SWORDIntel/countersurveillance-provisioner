@@ -37,3 +37,9 @@
   - [x] Outbound blocking split into its own evidence-gated store (`data/outbound_blocks.json`: exact /32//128, HTTPS provenance, overlap validation)
   - [x] NFLOG→ulogd2 drop telemetry with live fleet-wide aggregation (`cs-egress-stream` → `~/.local/state/cs-egress/all.log`)
   - [x] Evidence-gated strict allowance set from the 24-hour would-be-drop review — QUIC/NTP/DNS/SMTP/STUN/push/WG-transports/BT/he-ipv6/parrot0, shared verbatim between strict and shadow-audit modes
+
+- [x] **Phase 8: Fluid Remote Management & Clean-Slate Turnkey Deployment**
+  - [x] Add Jump Desktop Connect support: Fluid protocol (TCP/UDP 5273), direct P2P (UDP 35384–45385), and cloud signaling domains (`neuron/api/turn.jumpdesktop.com`)
+  - [x] Strictly confine Proxmox management (8006, 3128) and Corosync (UDP 5404–5405) traffic to authenticated `@trusted_mgmt` and local bridges
+  - [x] Implement clean-slate `install.sh` that resets prior rules and guarantees complete overwrite of existing configurations across all nodes
+  - [x] Resilient cluster deployment handling offline/maintenance nodes cleanly without aborting execution
