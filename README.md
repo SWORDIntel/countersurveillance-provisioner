@@ -43,10 +43,11 @@ Production-grade, automated provisioning suite for deploying high-precision, dua
 
 ### Core Architectural Principles
 
-1. **Distributed Deception, Centralized Evidence**:
+1. **Autonomous Standalone Architecture ("Every Machine Has Its Own Sink")**:
    - Rather than fragile Layer 3 transparent routing across WireGuard, the lightweight ChronoSink Go daemon (<8 MB RAM, 5.6 MB binary) runs **locally on each node**.
    - Trapped probes are redirected locally via in-kernel `nftables redirect to :port`, preserving the attacker's genuine Layer 3 `source_ip` without proxy encapsulation or asymmetric routing traps.
    - Evidence is dispatched centrally to `/opt/qihse-data/events/countersurveillance_alerts.jsonl` and Citadel Shield (`192.168.1.91:17872`).
+   - Every node is completely autonomous and standalone: no cluster hubs, spoke tunnels, or cross-node synchronizations are required. Running `./install.sh` with zero arguments provisions the entire stack cleanly.
 
 2. **Strict Ingress Trust vs. Outbound Egress Separation**:
    - `@trusted_mgmt_v4` & `@trusted_mgmt_v6`: Authorised management subnets (RFC1918, Loopback, Tailscale, Link-Local) strictly enforced on management daemons.
@@ -136,21 +137,37 @@ Every probe captured by ChronoSink is logged to `/var/log/chronosink/probes.json
 
 ## Usage
 
-### 0. Clean-Slate Installation (Recommended for New / Reset Deployments)
+### 0. Turnkey Standalone Installation (100% Automatic, Zero Arguments)
 ```bash
-./install.sh filter                         # Clean reset & deploy packet filter locally
-./install.sh remote john@192.168.1.90 filter # Clean reset & deploy remotely over SSH
-./install.sh cluster                        # Clean reset & deploy cluster-wide (t420, 730xd, t320)
+./install.sh
 ```
-`install.sh` acts as an idempotent clean-slate wrapper around `deploy.sh`. Before generating and applying new rules, it explicitly terminates prior services, drops existing `inet countersurveillance` nftables tables, cleans stale backups, and guarantees that updated configurations cleanly overwrite any preexisting configs across local and remote nodes.
+Or directly:
+```bash
+./deploy.sh
+```
+Running `./install.sh` or `./deploy.sh` with no arguments automatically provisions a complete, autonomous standalone counter-surveillance node on the machine ("every machine has its own sink, no cluster needed"):
+1. **Clean-Slate Reset**: Stops services, clears existing `table inet countersurveillance`, cleans stale backups and temporary files.
+2. **ChronoSink Go Deception Daemon**: Detects architecture (`amd64` or `arm64`), installs `/opt/chronosink/chronosink`, configures Citadel/QIHSE endpoints, and enables/starts `chronosink.service`.
+3. **In-Kernel Packet Filter**: Updates threat intel blacklist, validates syntax (`nft -c -f`), installs `/etc/nftables.d/countersurveillance.nft`, enables and restarts `countersurveillance-block.service` under rollback watchdog protection.
+4. **Daily Egress Whitelist Refresh Timer**: Installs the suite to `/opt/countersurveillance` and activates `countersurveillance-refresh.timer`.
+5. **Full Diagnostics & Verification**: Runs `verify.sh` to confirm service health, kernel table presence, DNS/ICMP/API egress, ingress/egress scope separation, and ChronoSink temporal deception.
 
-### 1. Deploy In-Kernel Filter (Local Node)
+Sub-commands for targeted tasks:
+```bash
+./install.sh filter                         # Clean reset & deploy packet filter only
+./install.sh local-daemon                   # Clean reset & deploy ChronoSink daemon + filter
+./install.sh install-refresh                # Clean reset & install refresh timer only
+./install.sh remote john@192.168.1.90       # Clean reset & provision remote node via SSH (default: auto)
+./install.sh uninstall                      # Safe teardown of countersurveillance table and services
+```
+
+### 1. Deploy In-Kernel Filter Only (Local Node)
 ```bash
 ./deploy.sh filter
 ```
 Compiles ruleset, checks syntax, arms rollback timer, and verifies egress. The node's egress mode is recorded to `/etc/countersurveillance/egress.mode` on success, so later refreshes reuse it.
 
-### 2. Deploy Full Deception Stack (Local Node)
+### 2. Deploy Deception Daemon + Filter (Local Node)
 ```bash
 ./deploy.sh local-daemon
 ```
@@ -158,8 +175,8 @@ Installs the sandboxed ChronoSink Go binary under systemd, applies local redirec
 
 ### 3. Deploy Remotely via SSH (with Watchdog Protection)
 ```bash
-./deploy.sh remote john@192.168.1.95 local-daemon   # T320
-./deploy.sh remote john@192.168.1.90 local-daemon   # 730xd
+./deploy.sh remote john@192.168.1.95         # T320 (runs full standalone auto deployment)
+./deploy.sh remote john@192.168.1.90 filter  # 730xd (runs filter-only deployment)
 ```
 *Note: The remote watchdog restores the previous firewall state automatically if connectivity fails.*
 

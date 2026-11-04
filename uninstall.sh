@@ -10,8 +10,8 @@ R='\033[1;31m'
 NC='\033[0m'
 
 echo -e "${Y}[*] Stopping and disabling provisioner services...${NC}"
-sudo systemctl stop countersurveillance-block.service chronosink.service 2>/dev/null || true
-sudo systemctl disable countersurveillance-block.service chronosink.service 2>/dev/null || true
+sudo systemctl stop countersurveillance-block.service chronosink.service countersurveillance-refresh.timer countersurveillance-refresh.service 2>/dev/null || true
+sudo systemctl disable countersurveillance-block.service chronosink.service countersurveillance-refresh.timer countersurveillance-refresh.service 2>/dev/null || true
 
 echo -e "${Y}[*] Removing ONLY table inet countersurveillance (preserving host tables)...${NC}"
 sudo nft delete table inet countersurveillance 2>/dev/null || true
@@ -21,7 +21,10 @@ if [ -f /etc/nftables.d/countersurveillance.nft ]; then
     sudo mv /etc/nftables.d/countersurveillance.nft "/etc/nftables.d/countersurveillance.nft.uninstalled.$(date +%Y%m%d%H%M%S)"
 fi
 
-sudo rm -f /etc/systemd/system/countersurveillance-block.service /etc/systemd/system/chronosink.service
+sudo rm -f /etc/systemd/system/countersurveillance-block.service \
+           /etc/systemd/system/chronosink.service \
+           /etc/systemd/system/countersurveillance-refresh.service \
+           /etc/systemd/system/countersurveillance-refresh.timer
 sudo systemctl daemon-reload
 
 echo -e "${G}[+] Provisioner teardown complete. Host firewall tables remain untouched.${NC}"

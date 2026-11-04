@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy.sh — Turnkey Counter-Surveillance & ChronoSink Provisioner
-# Hardened with Atomic Rollback Watchdog and Distributed Local Deception
+# Hardened with Atomic Rollback Watchdog and Standalone Autonomous Deception
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,20 +25,76 @@ R='\033[1;31m'
 NC='\033[0m'
 
 usage() {
+    echo -e "${CY}=== Counter-Surveillance & ChronoSink Turnkey Provisioner ===${NC}"
     echo -e "${CY}Usage:${NC}"
-    echo "  $0 filter                      # Deploy packet filter & anti-recon rules (with rollback watchdog)"
+    echo "  $0 [auto|all]                  # Fully automatic standalone deployment (Steps 1-5, default)"
+    echo "  $0 filter                      # Deploy packet filter & anti-recon rules only"
+    echo "  $0 local-daemon                # Deploy ChronoSink Go daemon + filter"
     echo "  $0 install-refresh             # Install suite to /opt + daily egress whitelist refresh timer"
-    echo "  $0 local-daemon                # Deploy Go ChronoSink daemon locally on this PC"
-    echo "  $0 local-container             # Deploy ChronoSink inside local Docker/Podman container"
-    echo "  $0 spoke-tunnel <sink_ip> [pubkey] # Connect to remote sink hub over WireGuard"
-    echo "  $0 hub                         # Provision this PC as central ChronoSink Hub"
-    echo "  $0 remote <user@host> [cmd]    # Provision remote node via SSH with atomic rollback watchdog"
-    echo "  $0 cluster                     # Provision full cluster (t420, 730xd, t320)"
-    exit 1
+    echo "  $0 remote <user@host> [cmd]    # Provision remote node via SSH (default cmd: auto)"
+    echo "  $0 uninstall                   # Safe teardown of countersurveillance table and services"
+    echo "  $0 --help                      # Show this help menu"
+    exit 0
+}
+
+clean_slate_reset() {
+    echo -e "\n${Y}[*] Step 1: Clean-slate undo/reset of existing counter-surveillance configs...${NC}"
+
+    # 1. Stop provisioner services
+    sudo systemctl stop countersurveillance-block.service chronosink.service countersurveillance-refresh.timer countersurveillance-refresh.service 2>/dev/null || true
+
+    # 2. Flush and delete any existing countersurveillance table
+    if sudo nft list table inet countersurveillance >/dev/null 2>&1; then
+        echo "[*] Deleting existing table inet countersurveillance..."
+        sudo nft delete table inet countersurveillance 2>/dev/null || true
+    fi
+
+    # 3. Clean up stale backup or temporary artifacts (preserving active rollback files)
+    sudo rm -f /etc/nftables.d/countersurveillance.nft.bak.* /etc/nftables.d/countersurveillance.nft.uninstalled.* 2>/dev/null || true
+    sudo rm -f /tmp/cs_temp_* 2>/dev/null || true
+
+    # 4. Remove stale installed ruleset so fresh config is guaranteed to overwrite
+    sudo rm -f /etc/nftables.d/countersurveillance.nft 2>/dev/null || true
+    sudo mkdir -p /etc/nftables.d /etc/countersurveillance
+
+    echo -e "${G}[+] Clean-slate reset complete.${NC}"
+}
+
+deploy_chronosink_daemon() {
+    echo -e "\n${CY}=== Step 2: Deploying ChronoSink Go Daemon on Local Host ===${NC}"
+
+    sudo mkdir -p /opt/chronosink /var/log/chronosink /etc/chronosink /opt/qihse-data/events
+    sudo chmod 777 /opt/qihse-data/events 2>/dev/null || true
+    ARCH=$(uname -m)
+    BIN_SOURCE="${SCRIPT_DIR}/honeypot/bin/chronosink-linux-amd64"
+    if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
+        BIN_SOURCE="${SCRIPT_DIR}/honeypot/bin/chronosink-linux-arm64"
+    fi
+
+    if [ ! -f "${BIN_SOURCE}" ] && [ -f "${SCRIPT_DIR}/honeypot/bin/chronosink" ]; then
+        BIN_SOURCE="${SCRIPT_DIR}/honeypot/bin/chronosink"
+    fi
+
+    echo "[*] Installing binary (${ARCH}) to /opt/chronosink/chronosink..."
+    sudo cp "${BIN_SOURCE}" /opt/chronosink/chronosink
+    sudo chmod 755 /opt/chronosink/chronosink
+
+    cat <<EOF | sudo tee /etc/chronosink/chronosink.env > /dev/null
+CITADEL_HOST=${CITADEL_HOST:-192.168.1.91}
+CITADEL_PORT=${CITADEL_PORT:-17872}
+QIHSE_EVENTS_FILE=${QIHSE_EVENTS_FILE:-/opt/qihse-data/events/countersurveillance_alerts.jsonl}
+EOF
+
+    sudo cp "${SCRIPT_DIR}/honeypot/chronosink.service" /etc/systemd/system/chronosink.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now chronosink.service
+    sudo systemctl restart chronosink.service
+
+    echo -e "${G}[+] ChronoSink Go daemon deployed and active.${NC}"
 }
 
 deploy_filter() {
-    echo -e "\n${CY}=== Deploying In-Kernel Packet Filter (with Watchdog) ===${NC}"
+    echo -e "\n${CY}=== Step 3: Deploying In-Kernel Packet Filter (with Watchdog) ===${NC}"
     python3 "${SCRIPT_DIR}/tools/update_blacklist.py"
 
     echo "[*] Preflight syntax validation..."
@@ -101,13 +157,18 @@ deploy_filter() {
 }
 
 deploy_refresh_units() {
-    echo -e "\n${CY}=== Installing Egress Whitelist Refresh Timer ===${NC}"
+    echo -e "\n${CY}=== Step 4: Installing Daily Egress Whitelist Refresh Timer ===${NC}"
     INSTALL_DIR="/opt/countersurveillance"
 
     sudo mkdir -p "${INSTALL_DIR}"
-    sudo rsync -a --delete \
-        --exclude '.git' --exclude 'honeypot/bin' \
-        "${SCRIPT_DIR}/" "${INSTALL_DIR}/"
+    if command -v rsync &>/dev/null; then
+        sudo rsync -a --delete \
+            --exclude '.git' --exclude 'honeypot/bin' \
+            "${SCRIPT_DIR}/" "${INSTALL_DIR}/"
+    else
+        sudo cp -a "${SCRIPT_DIR}/." "${INSTALL_DIR}/"
+        sudo rm -rf "${INSTALL_DIR}/.git" "${INSTALL_DIR}/honeypot/bin"
+    fi
 
     sudo mkdir -p /etc/countersurveillance
     if [ ! -f /etc/countersurveillance/egress.mode ]; then
@@ -121,9 +182,6 @@ deploy_refresh_units() {
                 else
                     echo 'STRICT_ALLOW_WEB=0'
                 fi
-                # New generator names per-direction prefixes (cs-audit-out /
-                # cs-strict-fwd, ...); the old monolithic 'cs-egress-drop' is
-                # gone. Match any cs- log rule so strict nodes keep logging.
                 if sudo grep -qE 'log prefix "cs-' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
                     echo 'STRICT_LOG_DROPS=1'
                 else
@@ -146,31 +204,32 @@ deploy_refresh_units() {
     systemctl list-timers countersurveillance-refresh.timer --no-pager || true
 }
 
+deploy_standalone() {
+    echo -e "\n${CY}================================================================${NC}"
+    echo -e "${CY}   Turnkey Standalone Counter-Surveillance Node Deployment       ${NC}"
+    echo -e "${CY}================================================================${NC}"
+
+    # Step 1: Clean-slate undo/reset any prior configs
+    clean_slate_reset
+
+    # Step 2: Deploy ChronoSink Go daemon
+    deploy_chronosink_daemon
+
+    # Step 3: Deploy in-kernel packet filter
+    deploy_filter
+
+    # Step 4: Deploy daily refresh timer
+    deploy_refresh_units
+
+    # Step 5: Run verify.sh diagnostics and report full success
+    echo -e "\n${CY}=== Step 5: Full Node Diagnostics & Verification ===${NC}"
+    bash "${VERIFY_SCRIPT}"
+
+    echo -e "\n${G}[✓] Standalone counter-surveillance node fully deployed, verified, and operational!${NC}"
+}
+
 deploy_local_daemon() {
-    echo -e "\n${CY}=== Deploying ChronoSink Go Daemon on Local PC ===${NC}"
-
-    sudo mkdir -p /opt/chronosink /var/log/chronosink /etc/chronosink /opt/qihse-data/events
-    sudo chmod 777 /opt/qihse-data/events 2>/dev/null || true
-    ARCH=$(uname -m)
-    BIN_SOURCE="${SCRIPT_DIR}/honeypot/bin/chronosink-linux-amd64"
-    if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
-        BIN_SOURCE="${SCRIPT_DIR}/honeypot/bin/chronosink-linux-arm64"
-    fi
-
-    echo "[*] Installing binary (${ARCH}) to /opt/chronosink/chronosink..."
-    sudo cp "${BIN_SOURCE}" /opt/chronosink/chronosink
-    sudo chmod 755 /opt/chronosink/chronosink
-
-    cat <<EOF | sudo tee /etc/chronosink/chronosink.env > /dev/null
-CITADEL_HOST=${CITADEL_HOST:-192.168.1.91}
-CITADEL_PORT=${CITADEL_PORT:-17872}
-QIHSE_EVENTS_FILE=${QIHSE_EVENTS_FILE:-/opt/qihse-data/events/countersurveillance_alerts.jsonl}
-EOF
-
-    sudo cp "${SCRIPT_DIR}/honeypot/chronosink.service" /etc/systemd/system/chronosink.service
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now chronosink.service
-
+    deploy_chronosink_daemon
     deploy_filter
     echo -e "${G}[+] Distributed local ChronoSink active and piping evidence to QIHSE & Citadel!${NC}"
 }
@@ -206,25 +265,9 @@ deploy_local_container() {
     echo -e "${G}[+] Local ChronoSink container running and telemetry linked to QIHSE!${NC}"
 }
 
-deploy_spoke_tunnel() {
-    local TARGET_SINK="${1:-${SINK_ENDPOINT}}"
-    local PUBKEY="${2:-${SINK_WG_PUBKEY:-}}"
-    local LOCAL_IP="${3:-${LOCAL_WG_IP:-10.200.0.2}}"
-
-    echo -e "\n${CY}=== Establishing WireGuard Tunnel to Sink: ${TARGET_SINK} ===${NC}"
-    if [[ -z "$PUBKEY" ]]; then
-        echo -e "${Y}[!] Sink WireGuard public key not provided. Run deploy-hub.sh on the sink host first.${NC}"
-        read -r -p "Enter Sink WireGuard Public Key: " PUBKEY
-    fi
-
-    sudo bash "${SCRIPT_DIR}/wireguard/setup-spoke.sh" "${LOCAL_IP}" "${TARGET_SINK}" "${PUBKEY}"
-    deploy_filter
-    echo -e "${G}[+] WireGuard tunnel established. Trapped scanner probes will route to ${TARGET_SINK}!${NC}"
-}
-
 deploy_remote() {
     local TARGET="$1"
-    local SUB_CMD="${2:-filter}"
+    local SUB_CMD="${2:-auto}"
     echo -e "\n${CY}=== Provisioning Remote Node: ${TARGET} (Action: ${SUB_CMD}) ===${NC}"
 
     python3 "${SCRIPT_DIR}/tools/update_blacklist.py"
@@ -284,11 +327,12 @@ EOF
     echo -e "${G}[+] Remote node ${TARGET} successfully provisioned and verified!${NC}"
 }
 
-if [ $# -lt 1 ]; then
-    usage
-fi
+ACTION="${1:-auto}"
 
-case "$1" in
+case "$ACTION" in
+    ""|auto|all)
+        deploy_standalone
+        ;;
     filter)
         deploy_filter
         ;;
@@ -301,31 +345,29 @@ case "$1" in
     local-container)
         deploy_local_container
         ;;
-    spoke-tunnel)
-        deploy_spoke_tunnel "${2:-}" "${3:-}" "${4:-}"
-        ;;
-    hub)
-        sudo bash "${SCRIPT_DIR}/honeypot/deploy-hub.sh"
-        ;;
     remote)
         if [ $# -lt 2 ]; then
+            echo -e "${R}[-] Missing remote host argument.${NC}"
             usage
+            exit 1
         fi
-        deploy_remote "$2" "${3:-filter}"
+        deploy_remote "$2" "${3:-auto}"
         ;;
-    cluster)
-        echo -e "${CY}[*] Starting cluster-wide counter-surveillance deployment...${NC}"
-        deploy_filter
-        for node in "john@192.168.1.90" "john@192.168.1.95"; do
-            if ssh -o BatchMode=yes -o ConnectTimeout=4 "$node" "true" 2>/dev/null; then
-                deploy_remote "$node" filter
-            else
-                echo -e "${Y}[!] Cluster node $node is currently unreachable (offline/maintenance). Skipping.${NC}"
-            fi
-        done
-        echo -e "\n${G}[+] Cluster provisioning finished!${NC}"
+    uninstall)
+        sudo bash "${SCRIPT_DIR}/uninstall.sh"
+        ;;
+    cluster|hub|spoke-tunnel)
+        echo -e "${R}[-] Legacy command '$ACTION' has been retired.${NC}"
+        echo -e "${Y}[*] Autonomous standalone architecture is now standard: every machine has its own local ChronoSink deception sink and filter.${NC}"
+        echo -e "${Y}[*] Run '$0' or './install.sh' with no arguments to deploy a complete standalone node.${NC}"
+        exit 1
+        ;;
+    -h|--help|help)
+        usage
         ;;
     *)
+        echo -e "${R}[-] Unknown action: $1${NC}"
         usage
+        exit 1
         ;;
 esac

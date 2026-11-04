@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # install.sh — Clean-Slate Turnkey Installer for Counter-Surveillance Suite
 # Overwrites and undoes any existing configs/tables first before performing deployment.
-# Can be run locally or targeted across all needed machines / cluster.
+# Deploys a complete standalone counter-surveillance node on any machine.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ACTION="${1:-filter}"
+ACTION="${1:-auto}"
 
 CY='\033[1;36m'
 G='\033[1;32m'
@@ -16,14 +16,12 @@ NC='\033[0m'
 usage() {
     echo -e "${CY}=== Counter-Surveillance Clean-Slate Installer ===${NC}"
     echo -e "${CY}Usage:${NC}"
-    echo "  $0 [filter]                    # Clean-slate reset & deploy packet filter (default)"
+    echo "  $0 [auto|all]                  # Complete turnkey standalone deployment (default)"
+    echo "  $0 filter                      # Clean-slate reset & deploy packet filter only"
+    echo "  $0 local-daemon                # Clean-slate deploy ChronoSink daemon + filter"
     echo "  $0 install-refresh             # Clean-slate install suite to /opt + refresh timer"
-    echo "  $0 local-daemon                # Clean-slate deploy ChronoSink daemon locally"
-    echo "  $0 local-container             # Clean-slate deploy ChronoSink in local container"
-    echo "  $0 spoke-tunnel <sink_ip>      # Clean-slate deploy WireGuard spoke tunnel to sink"
-    echo "  $0 hub                         # Clean-slate provision central ChronoSink hub"
     echo "  $0 remote <user@host> [cmd]    # Clean-slate provision remote node via SSH"
-    echo "  $0 cluster                     # Clean-slate provision all cluster nodes (local + remotes)"
+    echo "  $0 uninstall                   # Safe teardown of countersurveillance table and services"
     echo "  $0 --help                      # Show this help menu"
     exit 0
 }
@@ -57,10 +55,16 @@ clean_slate_reset() {
 
 echo -e "${CY}=== Counter-Surveillance Clean-Slate Installer ===${NC}"
 
-# If deploying to a remote host only, do not reset the local machine's firewall
-if [[ "$ACTION" != "remote" ]]; then
+# If deploying to a remote host only, do not reset the local machine's firewall.
+# For local sub-commands that are not auto/all, perform clean_slate_reset here
+# (auto/all performs Step 1 clean_slate_reset inside deploy.sh deploy_standalone).
+if [[ "$ACTION" != "remote" && "$ACTION" != "auto" && "$ACTION" != "all" ]]; then
     clean_slate_reset
 fi
 
 echo -e "${CY}[*] Proceeding with deployment: ${ACTION}...${NC}\n"
-exec "${SCRIPT_DIR}/deploy.sh" "$@"
+
+if [[ $# -gt 0 ]]; then
+    shift
+fi
+exec "${SCRIPT_DIR}/deploy.sh" "$ACTION" "$@"

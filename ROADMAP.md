@@ -43,3 +43,10 @@
   - [x] Strictly confine Proxmox management (8006, 3128) and Corosync (UDP 5404–5405) traffic to authenticated `@trusted_mgmt` and local bridges
   - [x] Implement clean-slate `install.sh` that resets prior rules and guarantees complete overwrite of existing configurations across all nodes
   - [x] Resilient cluster deployment handling offline/maintenance nodes cleanly without aborting execution
+
+- [x] **Phase 9: Standalone Autonomous Architecture & Turnkey Zero-Flag Deployment**
+  - [x] Deprecate and retire legacy hub-and-spoke cluster options (`cluster`, `hub`, `spoke-tunnel`) in favor of self-contained autonomous nodes ("every machine has its own sink, no cluster needed")
+  - [x] Fix argument forwarding bug in `install.sh` when invoked without arguments
+  - [x] Implement 5-step fully automatic standalone deployment pipeline in `install.sh` and `deploy.sh` (`clean_slate_reset` -> ChronoSink daemon -> in-kernel filter -> daily refresh timer -> full diagnostics)
+  - [x] Support sub-commands (`filter`, `local-daemon`, `install-refresh`, `remote`, `uninstall`) across `install.sh` and `deploy.sh`
+  - [x] Update documentation and operational runbooks for zero-flag turnkey node provisioning

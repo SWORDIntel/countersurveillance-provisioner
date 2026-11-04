@@ -141,4 +141,10 @@ if command -v wg >/dev/null 2>&1 && [ -n "$(sudo -n wg show interfaces 2>/dev/nu
     fi
 fi
 
+# 9. Refresh Timer Status (if installed)
+if systemctl is-active --quiet countersurveillance-refresh.timer 2>/dev/null; then
+    echo -n "[*] Checking egress refresh timer... "
+    echo -e "${G}ACTIVE${NC}"
+fi
+
 echo -e "\n${G}[+] All counter-surveillance verification checks completed successfully!${NC}"
