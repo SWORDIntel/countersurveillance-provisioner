@@ -20,9 +20,15 @@ pull() {  # $1=node  $2=target-or-local  $3=agent-target
     sed "s/^/$node /" "$out" >> "$COMBINED.tmp"
 }
 
-pull t420 local t420
-pull t320 john@192.168.1.95 t320
-pull 730xd john@192.168.1.90 730xd
+pull "$(hostname)" local "$(hostname)"
+if [ -n "${REMOTE_NODES:-}" ]; then
+    for entry in $REMOTE_NODES; do
+        # Format: node_name=user@host
+        name="${entry%%=*}"
+        target="${entry#*=}"
+        pull "$name" "$target" "$name"
+    done
+fi
 
 if [ -s "$COMBINED.tmp" ]; then
     sort -k2,3 "$COMBINED.tmp" > "$COMBINED"

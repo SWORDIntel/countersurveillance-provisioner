@@ -29,8 +29,8 @@
   - [x] Non-blocking UDP dispatch to Citadel Shield (`192.168.1.91:17872`) triggering real-time KEYSTONE trigram indexing
 
 - [x] **Phase 6: Fleet Rollout**
-  - [x] Deploy hardened local-daemon to `730xd` (192.168.1.90) via `deploy.sh remote`
-  - [x] Deploy hardened local-daemon to `T320` (192.168.1.95) via `deploy.sh remote`
+  - [x] Deploy hardened local-daemon to hypervisor node via `deploy.sh remote`
+  - [x] Deploy hardened local-daemon to secondary server node via `deploy.sh remote`
 
 - [x] **Phase 7: Evidence-Gated Egress Policy**
   - [x] Provenance audit of the original 60-CIDR scanner list against primary sources (`data/list_audit.json`); ingress scanner sets scoped input-only

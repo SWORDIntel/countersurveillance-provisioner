@@ -9,9 +9,11 @@ mkdir -p "$(dirname "$OUT")"
 touch "$OUT"
 
 stream_local() {
+    local h
+    h="$(hostname)"
     while :; do
         tail -F -n 0 /var/log/cs-egress-drops.log 2>/dev/null \
-            | sed -u 's/^/t420 /' >> "$OUT"
+            | sed -u "s/^/${h} /" >> "$OUT"
         sleep 5
     done
 }
@@ -28,7 +30,12 @@ stream_remote() {
 }
 
 stream_local &
-stream_remote t320 john@192.168.1.95 &
-stream_remote 730xd john@192.168.1.90 &
+if [ -n "${REMOTE_NODES:-}" ]; then
+    for entry in $REMOTE_NODES; do
+        name="${entry%%=*}"
+        host="${entry#*=}"
+        stream_remote "$name" "$host" &
+    done
+fi
 
 wait

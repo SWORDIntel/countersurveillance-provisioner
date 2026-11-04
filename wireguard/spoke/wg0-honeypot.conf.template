@@ -1,5 +1,5 @@
 # ChronoSink WireGuard Spoke Configuration Template
-# Deployed on cluster nodes (T320, 730xd, T420)
+# Deployed on spoke nodes
 
 [Interface]
 Address = {{SPOKE_WG_IP}}/24

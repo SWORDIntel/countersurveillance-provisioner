@@ -26,7 +26,7 @@ LISTEN_RAW_PORTS = [9445, 23, 445, 5555, 8291]
 LOG_FILE = "/var/log/chronosink/probes.jsonl"
 LOG_DIR = "/var/log/chronosink"
 
-# Citadel Shield Telemetry Target (t420 hub)
+# Citadel Shield Telemetry Target
 CITADEL_HOST = os.getenv("CITADEL_HOST", "192.168.1.91")
 CITADEL_PORT = int(os.getenv("CITADEL_PORT", "17872"))
 
@@ -68,7 +68,7 @@ def log_event(event_type: str, src_ip: str, src_port: int, dst_port: int, detail
     except Exception as e:
         print(f"[ERROR] Failed to log event: {e}", file=sys.stderr)
 
-    # Forward alert datagram to Citadel Shield on t420:17872
+    # Forward alert datagram to Citadel Shield on :17872
     try:
         payload = json.dumps({
             "node": socket.gethostname(),

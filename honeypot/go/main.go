@@ -186,7 +186,7 @@ func dispatchTelemetry(srcIP string, srcPort int, dstPort int, protocol string, 
 		}
 	}
 
-	// 3. UDP Datagram to Citadel Shield (t420:17872)
+	// 3. UDP Datagram to Citadel Shield (host:17872)
 	citadelHost := os.Getenv("CITADEL_HOST")
 	if citadelHost == "" {
 		citadelHost = CitadelDefaultHost

@@ -46,7 +46,7 @@ Production-grade, automated provisioning suite for deploying high-precision, dua
 1. **Autonomous Standalone Architecture ("Every Machine Has Its Own Sink")**:
    - Rather than fragile Layer 3 transparent routing across WireGuard, the lightweight ChronoSink Go daemon (<8 MB RAM, 5.6 MB binary) runs **locally on each node**.
    - Trapped probes are redirected locally via in-kernel `nftables redirect to :port`, preserving the attacker's genuine Layer 3 `source_ip` without proxy encapsulation or asymmetric routing traps.
-   - Evidence is dispatched centrally to `/opt/qihse-data/events/countersurveillance_alerts.jsonl` and Citadel Shield (`192.168.1.91:17872`).
+   - Evidence is logged locally to `/opt/qihse-data/events/countersurveillance_alerts.jsonl` and optionally dispatched via UDP to Citadel Shield / telemetry endpoints.
    - Every node is completely autonomous and standalone: no cluster hubs, spoke tunnels, or cross-node synchronizations are required. Running `./install.sh` with zero arguments provisions the entire stack cleanly.
 
 2. **Strict Ingress Trust vs. Outbound Egress Separation**:
@@ -111,7 +111,7 @@ Every probe captured by ChronoSink is logged to `/var/log/chronosink/probes.json
 {
   "schema_version": 1,
   "event_id": "9aabf18b14f19403fc26daf1",
-  "sensor_id": "t420",
+  "sensor_id": "node-01",
   "timestamp_utc": "2026-10-30T15:11:04Z",
   "source_ip": "198.51.100.25",
   "source_port": 35930,
@@ -157,7 +157,7 @@ Sub-commands for targeted tasks:
 ./install.sh filter                         # Clean reset & deploy packet filter only
 ./install.sh local-daemon                   # Clean reset & deploy ChronoSink daemon + filter
 ./install.sh install-refresh                # Clean reset & install refresh timer only
-./install.sh remote john@192.168.1.90       # Clean reset & provision remote node via SSH (default: auto)
+./install.sh remote user@remote-host       # Clean reset & provision remote node via SSH (default: auto)
 ./install.sh uninstall                      # Safe teardown of countersurveillance table and services
 ```
 
@@ -175,8 +175,8 @@ Installs the sandboxed ChronoSink Go binary under systemd, applies local redirec
 
 ### 3. Deploy Remotely via SSH (with Watchdog Protection)
 ```bash
-./deploy.sh remote john@192.168.1.95         # T320 (runs full standalone auto deployment)
-./deploy.sh remote john@192.168.1.90 filter  # 730xd (runs filter-only deployment)
+./deploy.sh remote user@remote-host         # Runs full standalone auto deployment
+./deploy.sh remote user@remote-host filter  # Runs filter-only deployment
 ```
 *Note: The remote watchdog restores the previous firewall state automatically if connectivity fails.*
 
@@ -226,7 +226,7 @@ The allowance set is generated per node by `strict_allowances()` (`tools/update_
 
 `socket cgroupv2` attribution is emitted **only in `output`** by design: it attributes the locally-owned socket, which does not exist for forwarded VM/LAN traffic (that is covered by the port allows instead). Allowances are emitted *after* the `@outbound_block_*` verdict jumps, so an evidenced blocking decision stays dropped even on an allowed port; the `counter` + `log` audit tail comes last, so it records only traffic no allowance accepted.
 
-Rollout status: all three nodes (`t420`, `730xd`, `t320`) run permissive audit mode (`STRICT_EGRESS=0 STRICT_ALLOW_WEB=1 STRICT_LOG_DROPS=1`) with shadow logging live; the strict flip is gated on a clean 24 h `tools/egress_review.sh` sign-off.
+Deployment status: nodes can run permissive audit mode (`STRICT_EGRESS=0 STRICT_ALLOW_WEB=1 STRICT_LOG_DROPS=1`) with shadow logging live; the strict flip is gated on a clean 24 h `tools/egress_review.sh` sign-off.
 
 ### 7. Daily Egress Whitelist Refresh
 ```bash
@@ -234,4 +234,4 @@ sudo ./deploy.sh install-refresh
 ```
 Installs the suite to `/opt/countersurveillance` and a `countersurveillance-refresh.timer` that regenerates and redeploys the ruleset each day in the node's recorded mode. Every run preflights, arms the rollback watchdog, and auto-reverts on verification failure, so a bad DNS day leaves the live table alone. `/etc/countersurveillance/egress.mode` is mandatory for the unit: if it is missing the unit fails loudly rather than downgrading a strict node to accept.
 
-A post-refresh survival check (`tools/refresh_survival_check.sh`, exit 0/1/2) verifies each node after the morning window: refresh unit verified and the recorded mode re-applied, `/etc/countersurveillance/egress.mode` unchanged, zero fresh legacy `cs-egress-drop` lines, and ulogd2 + the fleet stream alive. Exit 2 means the refresh has not run yet — rerun after ~05:00 GMT. The t420 workstation runs it via the `configs/user/cs-refresh-check.timer` user timer (Mondays 05:30, `Persistent=true`); failures are journalled via `OnFailure=cs-refresh-check-fail.service` → `systemd-cat -t cs-refresh-check`, with no desktop popup.
+A post-refresh survival check (`tools/refresh_survival_check.sh`, exit 0/1/2) verifies each node after the morning window: refresh unit verified and the recorded mode re-applied, `/etc/countersurveillance/egress.mode` unchanged, zero fresh legacy `cs-egress-drop` lines, and ulogd2 + the stream alive. Exit 2 means the refresh has not run yet — rerun after ~05:00 GMT. Nodes can run it via the `configs/user/cs-refresh-check.timer` user timer (Mondays 05:30, `Persistent=true`); failures are journalled via `OnFailure=cs-refresh-check-fail.service` → `systemd-cat -t cs-refresh-check`, with no desktop popup.

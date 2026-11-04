@@ -17,9 +17,9 @@
 #      old ruleset was loaded; this is the 2026-11-01 04:27 failure signature)
 #   5. ulogd2 (drop-telemetry sink) is active
 #
-# On the aggregator (t420) it additionally requires the user-level
+# On the aggregator it additionally requires the user-level
 # cs-egress-stream.service active, so ~/.local/state/cs-egress/all.log keeps
-# aggregating all three nodes.
+# aggregating events.
 #
 # Usage:
 #   tools/refresh_survival_check.sh
@@ -35,12 +35,17 @@ EXPECTED_MODE="STRICT_EGRESS=0
 STRICT_ALLOW_WEB=1
 STRICT_LOG_DROPS=1"
 
-AGGREGATOR_HOST=""                 # empty = local (t420 runs this script)
+AGGREGATOR_HOST=""                 # empty = local
 declare -A NODES=(
-  ["t420"]=""
-  ["730xd"]="john@192.168.1.90"
-  ["t320"]="john@192.168.1.95"
+  ["local"]=""
 )
+if [ -n "${SURVIVAL_CHECK_NODES:-}" ]; then
+  for pair in $SURVIVAL_CHECK_NODES; do
+    lbl="${pair%%=*}"
+    tgt="${pair#*=}"
+    NODES["$lbl"]="$tgt"
+  done
+fi
 
 # The per-node probe is ONE string so nested quoting survives ssh intact.
 NODE_PROBE='
@@ -145,14 +150,14 @@ check_node() {
   return "$rc"
 }
 
-for label in t420 730xd t320; do
+for label in "${!NODES[@]}"; do
   check_node "$label" "${NODES[$label]}"
   rc=$?
   if [ "$rc" -eq 1 ]; then FAILURES=$((FAILURES + 1)); fi
   if [ "$rc" -eq 2 ]; then SKIPPED=$((SKIPPED + 1)); fi
 done
 
-section "aggregator stream (t420)"
+section "local aggregator stream"
 if systemctl --user is-active cs-egress-stream.service >/dev/null 2>&1; then
   echo "PASS: cs-egress-stream.service active"
 else

@@ -78,19 +78,19 @@ PrivateKey = ${HUB_PRIV}
 PostUp = ip rule add iif %i table 200; ip route add default dev %i table 200; sysctl -w net.ipv4.ip_forward=1
 PostDown = ip rule del iif %i table 200; ip route del default dev %i table 200
 
-# Spoke: T320 (192.168.1.95)
+# Spoke Node 1
 # [Peer]
-# PublicKey = <T320_SPOKE_PUBKEY>
+# PublicKey = <SPOKE_1_PUBKEY>
 # AllowedIPs = 10.200.0.2/32
 
-# Spoke: 730xd (192.168.1.90)
+# Spoke Node 2
 # [Peer]
-# PublicKey = <730XD_SPOKE_PUBKEY>
+# PublicKey = <SPOKE_2_PUBKEY>
 # AllowedIPs = 10.200.0.3/32
 
-# Spoke: T420 (192.168.1.91)
+# Spoke Node 3
 # [Peer]
-# PublicKey = <T420_SPOKE_PUBKEY>
+# PublicKey = <SPOKE_3_PUBKEY>
 # AllowedIPs = 10.200.0.4/32
 EOF
     chmod 600 "$HUB_CONF"
@@ -109,7 +109,7 @@ echo "Hub WireGuard Public Key:"
 echo "  ${HUB_PUBLIC}"
 echo ""
 echo "Next Steps:"
-echo "1. On each spoke (T320, 730xd, T420), run:"
+echo "1. On each spoke node, run:"
 echo "   sudo ./wireguard/setup-spoke.sh <spoke_wg_ip> <hub_endpoint> '${HUB_PUBLIC}'"
 echo "2. Add each spoke's public key as a [Peer] block in /etc/wireguard/wg-hub.conf"
 echo "   and reload: sudo wg syncconf wg-hub <(wg-quick strip wg-hub)"

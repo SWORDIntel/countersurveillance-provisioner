@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# shadow_report.sh — pop a persistent toast listing destinations the strict
-# egress policy would blackhole on 730xd (from the inet cs_shadow counter log).
+# shadow_report.sh — record destinations the strict egress policy would
+# blackhole on the target host (from the inet cs_shadow counter log).
 set -euo pipefail
 
-HOST="${SHADOW_HOST:-john@192.168.1.90}"
+HOST="${SHADOW_HOST:-localhost}"
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/cs-shadow"
 SEEN="$STATE/seen.txt"
 mkdir -p "$STATE"
@@ -26,4 +26,4 @@ SAMPLE="$(printf '%s\n' "$NEW" | head -6 | tr '\n' ' ')"
 # Operator request (2026-11-01): record to the journal, no desktop popup.
 # The shadow destination list itself (${SEEN}) is still updated above.
 logger -t cs-shadow-report \
-    "730xd egress shadow: ${COUNT} new destination(s): ${SAMPLE} — would be blocked under STRICT_EGRESS; full list: ${SEEN}"
+    "${HOST} egress shadow: ${COUNT} new destination(s): ${SAMPLE} — would be blocked under STRICT_EGRESS; full list: ${SEEN}"

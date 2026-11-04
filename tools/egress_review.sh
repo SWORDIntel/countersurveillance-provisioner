@@ -10,7 +10,8 @@ WINDOW="${1:-all}"
 echo "Would-be drops under STRICT_EGRESS (source: $COMBINED, window: $WINDOW)"
 echo
 
-for node in t420 t320 730xd; do
+NODES="${CS_NODES:-$(awk '{print $1}' "$COMBINED" | sort -u)}"
+for node in $NODES; do
     events="$(awk -v n="$node" '$1 == n' "$COMBINED" | wc -l)"
     printf '### %s — %s events\n' "$node" "$events"
     [ "$events" -eq 0 ] && { echo; continue; }
