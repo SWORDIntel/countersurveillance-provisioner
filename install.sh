@@ -4,6 +4,11 @@
 # Deploys a complete standalone counter-surveillance node on any machine.
 set -euo pipefail
 
+SUDO=()
+if (( EUID != 0 )); then
+    SUDO=(sudo)
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACTION="${1:-auto}"
 
@@ -34,21 +39,21 @@ clean_slate_reset() {
     echo -e "${Y}[*] Undoing and resetting any existing counter-surveillance configs...${NC}"
 
     # 1. Stop provisioner services
-    sudo systemctl stop countersurveillance-block.service chronosink.service countersurveillance-refresh.timer countersurveillance-refresh.service 2>/dev/null || true
+    "${SUDO[@]}" systemctl stop countersurveillance-block.service chronosink.service countersurveillance-refresh.timer countersurveillance-refresh.service 2>/dev/null || true
 
     # 2. Flush and delete any existing countersurveillance table
-    if sudo nft list table inet countersurveillance >/dev/null 2>&1; then
+    if "${SUDO[@]}" nft list table inet countersurveillance >/dev/null 2>&1; then
         echo "[*] Deleting existing table inet countersurveillance..."
-        sudo nft delete table inet countersurveillance 2>/dev/null || true
+        "${SUDO[@]}" nft delete table inet countersurveillance 2>/dev/null || true
     fi
 
     # 3. Clean up stale backup or temporary artifacts (preserving active rollback files)
-    sudo rm -f /etc/nftables.d/countersurveillance.nft.bak.* /etc/nftables.d/countersurveillance.nft.uninstalled.* 2>/dev/null || true
-    sudo rm -f /tmp/cs_temp_* 2>/dev/null || true
+    "${SUDO[@]}" rm -f /etc/nftables.d/countersurveillance.nft.bak.* /etc/nftables.d/countersurveillance.nft.uninstalled.* 2>/dev/null || true
+    "${SUDO[@]}" rm -f /tmp/cs_temp_* 2>/dev/null || true
 
     # 4. Remove stale installed ruleset so fresh config is guaranteed to overwrite
-    sudo rm -f /etc/nftables.d/countersurveillance.nft 2>/dev/null || true
-    sudo mkdir -p /etc/nftables.d /etc/countersurveillance
+    "${SUDO[@]}" rm -f /etc/nftables.d/countersurveillance.nft 2>/dev/null || true
+    "${SUDO[@]}" mkdir -p /etc/nftables.d /etc/countersurveillance
 
     echo -e "${G}[+] Clean-slate reset complete.${NC}"
 }

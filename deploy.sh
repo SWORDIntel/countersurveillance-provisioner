@@ -3,6 +3,11 @@
 # Hardened with Atomic Rollback Watchdog and Standalone Autonomous Deception
 set -euo pipefail
 
+SUDO=()
+if (( EUID != 0 )); then
+    SUDO=(sudo)
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_NFT="${SCRIPT_DIR}/configs/countersurveillance.nft"
 SERVICE_FILE="${SCRIPT_DIR}/configs/countersurveillance-block.service"
@@ -41,36 +46,36 @@ clean_slate_reset() {
     echo -e "\n${Y}[*] Step 1: Clean-slate undo/reset of existing counter-surveillance configs...${NC}"
 
     # 1. Stop provisioner services
-    sudo systemctl stop countersurveillance-block.service chronosink.service countersurveillance-refresh.timer countersurveillance-refresh.service 2>/dev/null || true
+    "${SUDO[@]}" systemctl stop countersurveillance-block.service chronosink.service countersurveillance-refresh.timer countersurveillance-refresh.service 2>/dev/null || true
 
     # 2. Flush and delete any existing countersurveillance table
-    if sudo nft list table inet countersurveillance >/dev/null 2>&1; then
+    if "${SUDO[@]}" nft list table inet countersurveillance >/dev/null 2>&1; then
         echo "[*] Deleting existing table inet countersurveillance..."
-        sudo nft delete table inet countersurveillance 2>/dev/null || true
+        "${SUDO[@]}" nft delete table inet countersurveillance 2>/dev/null || true
     fi
 
     # 3. Clean up stale backup or temporary artifacts (preserving active rollback files)
-    sudo rm -f /etc/nftables.d/countersurveillance.nft.bak.* /etc/nftables.d/countersurveillance.nft.uninstalled.* 2>/dev/null || true
-    sudo rm -f /tmp/cs_temp_* 2>/dev/null || true
+    "${SUDO[@]}" rm -f /etc/nftables.d/countersurveillance.nft.bak.* /etc/nftables.d/countersurveillance.nft.uninstalled.* 2>/dev/null || true
+    "${SUDO[@]}" rm -f /tmp/cs_temp_* 2>/dev/null || true
 
     # 4. Remove stale installed ruleset so fresh config is guaranteed to overwrite
-    sudo rm -f /etc/nftables.d/countersurveillance.nft 2>/dev/null || true
-    sudo mkdir -p /etc/nftables.d /etc/countersurveillance
+    "${SUDO[@]}" rm -f /etc/nftables.d/countersurveillance.nft 2>/dev/null || true
+    "${SUDO[@]}" mkdir -p /etc/nftables.d /etc/countersurveillance
 
     echo -e "${G}[+] Clean-slate reset complete.${NC}"
 }
 
 ensure_event_dirs() {
-    sudo mkdir -p /opt/chronosink /var/log/chronosink /etc/chronosink /opt/qihse-data/events
-    sudo chmod 1777 /opt/qihse-data/events 2>/dev/null || true
-    sudo chmod 1777 /var/log/chronosink 2>/dev/null || true
+    "${SUDO[@]}" mkdir -p /opt/chronosink /var/log/chronosink /etc/chronosink /opt/qihse-data/events
+    "${SUDO[@]}" chmod 1777 /opt/qihse-data/events 2>/dev/null || true
+    "${SUDO[@]}" chmod 1777 /var/log/chronosink 2>/dev/null || true
 }
 
 install_logrotate() {
     echo "[*] Installing logrotate definitions..."
-    sudo mkdir -p /etc/logrotate.d
+    "${SUDO[@]}" mkdir -p /etc/logrotate.d
 
-    cat <<'EOF' | sudo tee /etc/logrotate.d/chronosink >/dev/null
+    cat <<'EOF' | "${SUDO[@]}" tee /etc/logrotate.d/chronosink >/dev/null
 /var/log/chronosink/*.jsonl /opt/qihse-data/events/*.jsonl {
     rotate 7
     size 50M
@@ -80,9 +85,9 @@ install_logrotate() {
     notifempty
 }
 EOF
-    sudo chmod 0644 /etc/logrotate.d/chronosink
+    "${SUDO[@]}" chmod 0644 /etc/logrotate.d/chronosink
 
-    cat <<'EOF' | sudo tee /etc/logrotate.d/cs-egress-drops >/dev/null
+    cat <<'EOF' | "${SUDO[@]}" tee /etc/logrotate.d/cs-egress-drops >/dev/null
 /var/log/cs-egress-drops.log {
     rotate 14
     size 100M
@@ -92,7 +97,7 @@ EOF
     notifempty
 }
 EOF
-    sudo chmod 0644 /etc/logrotate.d/cs-egress-drops
+    "${SUDO[@]}" chmod 0644 /etc/logrotate.d/cs-egress-drops
 }
 
 deploy_chronosink_daemon() {
@@ -111,19 +116,19 @@ deploy_chronosink_daemon() {
     fi
 
     echo "[*] Installing binary (${ARCH}) to /opt/chronosink/chronosink..."
-    sudo cp "${BIN_SOURCE}" /opt/chronosink/chronosink
-    sudo chmod 755 /opt/chronosink/chronosink
+    "${SUDO[@]}" cp "${BIN_SOURCE}" /opt/chronosink/chronosink
+    "${SUDO[@]}" chmod 755 /opt/chronosink/chronosink
 
-    cat <<EOF | sudo tee /etc/chronosink/chronosink.env > /dev/null
+    cat <<EOF | "${SUDO[@]}" tee /etc/chronosink/chronosink.env > /dev/null
 CITADEL_HOST=${CITADEL_HOST:-192.168.1.91}
 CITADEL_PORT=${CITADEL_PORT:-17872}
 QIHSE_EVENTS_FILE=${QIHSE_EVENTS_FILE:-/opt/qihse-data/events/countersurveillance_alerts.jsonl}
 EOF
 
-    sudo cp "${SCRIPT_DIR}/honeypot/chronosink.service" /etc/systemd/system/chronosink.service
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now chronosink.service
-    sudo systemctl restart chronosink.service
+    "${SUDO[@]}" cp "${SCRIPT_DIR}/honeypot/chronosink.service" /etc/systemd/system/chronosink.service
+    "${SUDO[@]}" systemctl daemon-reload
+    "${SUDO[@]}" systemctl enable --now chronosink.service
+    "${SUDO[@]}" systemctl restart chronosink.service
 
     echo -e "${G}[+] ChronoSink Go daemon deployed and active.${NC}"
 }
@@ -135,23 +140,23 @@ deploy_filter() {
     python3 "${SCRIPT_DIR}/tools/update_blacklist.py"
 
     echo "[*] Preflight syntax validation..."
-    sudo nft -c -f "${CONFIG_NFT}"
+    "${SUDO[@]}" nft -c -f "${CONFIG_NFT}"
 
-    sudo mkdir -p /etc/nftables.d
+    "${SUDO[@]}" mkdir -p /etc/nftables.d
     BACKUP_FILE="/etc/nftables.d/countersurveillance.nft.bak.$(date +%Y%m%d%H%M%S)"
 
     # Backup existing table if active, or initialize clean rollback target.
     # The dump must start with a table reset: replaying a bare dump onto a live
     # table only appends rules, it does not restore the previous state.
-    if sudo nft list table inet countersurveillance >/dev/null 2>&1; then
+    if "${SUDO[@]}" nft list table inet countersurveillance >/dev/null 2>&1; then
         echo "[*] Backing up existing table to ${BACKUP_FILE}..."
         {
             printf 'table inet countersurveillance\ndelete table inet countersurveillance\n'
-            sudo nft list table inet countersurveillance
-        } | sudo tee "${BACKUP_FILE}" >/dev/null
+            "${SUDO[@]}" nft list table inet countersurveillance
+        } | "${SUDO[@]}" tee "${BACKUP_FILE}" >/dev/null
     else
         echo "[*] Initializing rollback target for clean deletion..."
-        printf 'table inet countersurveillance\ndelete table inet countersurveillance\n' | sudo tee "${BACKUP_FILE}" >/dev/null
+        printf 'table inet countersurveillance\ndelete table inet countersurveillance\n' | "${SUDO[@]}" tee "${BACKUP_FILE}" >/dev/null
     fi
 
     # Arm Rollback Watchdog (detached, immune to SIGHUP, disarm file flag)
@@ -161,7 +166,7 @@ deploy_filter() {
         trap '' HUP
         sleep 60
         if [ ! -f "$WATCHDOG_DISARM" ]; then
-            sudo nft -f "$BACKUP_FILE" 2>/dev/null || true
+            "${SUDO[@]}" nft -f "$BACKUP_FILE" 2>/dev/null || true
             logger -t cs-watchdog "Rollback watchdog fired after timeout"
         fi
         rm -f "$WATCHDOG_DISARM" "$BACKUP_FILE"
@@ -169,38 +174,38 @@ deploy_filter() {
     WATCHDOG_PID=$!
 
     echo "[*] Installing ruleset and restarting service..."
-    sudo cp "${CONFIG_NFT}" /etc/nftables.d/countersurveillance.nft
-    sudo cp "${SERVICE_FILE}" /etc/systemd/system/countersurveillance-block.service
+    "${SUDO[@]}" cp "${CONFIG_NFT}" /etc/nftables.d/countersurveillance.nft
+    "${SUDO[@]}" cp "${SERVICE_FILE}" /etc/systemd/system/countersurveillance-block.service
 
-    sudo systemctl daemon-reload
-    sudo systemctl enable countersurveillance-block.service
-    sudo systemctl restart countersurveillance-block.service
+    "${SUDO[@]}" systemctl daemon-reload
+    "${SUDO[@]}" systemctl enable countersurveillance-block.service
+    "${SUDO[@]}" systemctl restart countersurveillance-block.service
 
     echo "[*] Running post-deployment verification..."
     if bash "${VERIFY_SCRIPT}"; then
         touch "$WATCHDOG_DISARM"
         kill "$WATCHDOG_PID" 2>/dev/null || true
-        sudo rm -f "$BACKUP_FILE" "$WATCHDOG_DISARM" 2>/dev/null || true
+        "${SUDO[@]}" rm -f "$BACKUP_FILE" "$WATCHDOG_DISARM" 2>/dev/null || true
 
         # Record the node's egress mode so the refresh timer redeploys with the
         # same policy instead of silently downgrading a strict node to accept.
-        sudo mkdir -p /etc/countersurveillance
+        "${SUDO[@]}" mkdir -p /etc/countersurveillance
         {
             if [ "${STRICT_EGRESS:-0}" = "1" ]; then echo 'STRICT_EGRESS=1'; else echo 'STRICT_EGRESS=0'; fi
             if [ "${STRICT_ALLOW_WEB:-0}" = "1" ]; then echo 'STRICT_ALLOW_WEB=1'; else echo 'STRICT_ALLOW_WEB=0'; fi
             if [ "${STRICT_LOG_DROPS:-1}" = "1" ]; then echo 'STRICT_LOG_DROPS=1'; else echo 'STRICT_LOG_DROPS=0'; fi
-        } | sudo tee /etc/countersurveillance/egress.mode >/dev/null
+        } | "${SUDO[@]}" tee /etc/countersurveillance/egress.mode >/dev/null
         echo -e "${G}[+] Deployment verified. Rollback watchdog disarmed.${NC}"
-        echo "[+] Egress mode recorded: $(sudo cat /etc/countersurveillance/egress.mode)"
+        echo "[+] Egress mode recorded: $("${SUDO[@]}" cat /etc/countersurveillance/egress.mode)"
     else
         echo -e "${R}[-] Verification failed! Reverting ruleset immediately...${NC}"
         touch "$WATCHDOG_DISARM"
         kill "$WATCHDOG_PID" 2>/dev/null || true
         if [ -f "${BACKUP_FILE}" ]; then
-            sudo nft -f "${BACKUP_FILE}" 2>/dev/null || true
-            sudo rm -f "${BACKUP_FILE}" 2>/dev/null || true
+            "${SUDO[@]}" nft -f "${BACKUP_FILE}" 2>/dev/null || true
+            "${SUDO[@]}" rm -f "${BACKUP_FILE}" 2>/dev/null || true
         fi
-        sudo rm -f "$WATCHDOG_DISARM" 2>/dev/null || true
+        "${SUDO[@]}" rm -f "$WATCHDOG_DISARM" 2>/dev/null || true
         exit 1
     fi
 }
@@ -209,47 +214,47 @@ deploy_refresh_units() {
     echo -e "\n${CY}=== Step 4: Installing Daily Egress Whitelist Refresh Timer ===${NC}"
     INSTALL_DIR="/opt/countersurveillance"
 
-    sudo mkdir -p "${INSTALL_DIR}"
+    "${SUDO[@]}" mkdir -p "${INSTALL_DIR}"
     if command -v rsync &>/dev/null; then
-        sudo rsync -a --delete \
+        "${SUDO[@]}" rsync -a --delete \
             --exclude '.git' --exclude 'honeypot/bin' \
             "${SCRIPT_DIR}/" "${INSTALL_DIR}/"
     else
-        sudo cp -a "${SCRIPT_DIR}/." "${INSTALL_DIR}/"
-        sudo rm -rf "${INSTALL_DIR}/.git" "${INSTALL_DIR}/honeypot/bin"
+        "${SUDO[@]}" cp -a "${SCRIPT_DIR}/." "${INSTALL_DIR}/"
+        "${SUDO[@]}" rm -rf "${INSTALL_DIR}/.git" "${INSTALL_DIR}/honeypot/bin"
     fi
 
-    sudo mkdir -p /etc/countersurveillance
+    "${SUDO[@]}" mkdir -p /etc/countersurveillance
     if [ ! -f /etc/countersurveillance/egress.mode ]; then
         # Derive the mode from the ruleset actually installed, so a node already
         # running strict is never silently downgraded to accept by the refresh.
-        if sudo grep -qE 'hook (output|forward).*policy drop' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
+        if "${SUDO[@]}" grep -qE 'hook (output|forward).*policy drop' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
             {
                 echo 'STRICT_EGRESS=1'
-                if sudo grep -qE 'tcp dport \{ 22, 80, 443 \}' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
+                if "${SUDO[@]}" grep -qE 'tcp dport \{ 22, 80, 443 \}' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
                     echo 'STRICT_ALLOW_WEB=1'
                 else
                     echo 'STRICT_ALLOW_WEB=0'
                 fi
-                if sudo grep -qE 'log prefix "cs-' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
+                if "${SUDO[@]}" grep -qE 'log prefix "cs-' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
                     echo 'STRICT_LOG_DROPS=1'
                 else
                     echo 'STRICT_LOG_DROPS=0'
                 fi
-            } | sudo tee /etc/countersurveillance/egress.mode >/dev/null
+            } | "${SUDO[@]}" tee /etc/countersurveillance/egress.mode >/dev/null
             echo "[*] Detected strict egress in the installed ruleset; recording STRICT_EGRESS=1."
         else
-            printf 'STRICT_EGRESS=0\nSTRICT_ALLOW_WEB=0\n' | sudo tee /etc/countersurveillance/egress.mode >/dev/null
+            printf 'STRICT_EGRESS=0\nSTRICT_ALLOW_WEB=0\n' | "${SUDO[@]}" tee /etc/countersurveillance/egress.mode >/dev/null
             echo "[*] Installed ruleset uses accept policy; recording STRICT_EGRESS=0."
         fi
     fi
 
-    sudo install -m 0644 "${SCRIPT_DIR}/configs/countersurveillance-refresh.service" /etc/systemd/system/
-    sudo install -m 0644 "${SCRIPT_DIR}/configs/countersurveillance-refresh.timer" /etc/systemd/system/
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now countersurveillance-refresh.timer
+    "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/countersurveillance-refresh.service" /etc/systemd/system/
+    "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/countersurveillance-refresh.timer" /etc/systemd/system/
+    "${SUDO[@]}" systemctl daemon-reload
+    "${SUDO[@]}" systemctl enable --now countersurveillance-refresh.timer
 
-    echo -e "${G}[+] Refresh timer installed (mode: $(sudo cat /etc/countersurveillance/egress.mode))${NC}"
+    echo -e "${G}[+] Refresh timer installed (mode: $("${SUDO[@]}" cat /etc/countersurveillance/egress.mode))${NC}"
     systemctl list-timers countersurveillance-refresh.timer --no-pager || true
 }
 
@@ -411,7 +416,7 @@ case "$ACTION" in
         deploy_remote "$2" "${3:-auto}"
         ;;
     uninstall)
-        sudo bash "${SCRIPT_DIR}/uninstall.sh"
+        "${SUDO[@]}" bash "${SCRIPT_DIR}/uninstall.sh"
         ;;
     cluster|hub|spoke-tunnel)
         echo -e "${R}[-] Legacy command '$ACTION' has been retired.${NC}"

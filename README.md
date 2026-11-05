@@ -144,6 +144,10 @@ Every probe captured by ChronoSink is logged to `/var/log/chronosink/probes.json
 
 ## Usage
 
+The scripts check the effective user ID once and set a `SUDO` command prefix for privileged
+operations. Run them directly as root without `sudo`; non-root users use `sudo` for privileged
+commands. Remote deployments still require the SSH account on the target to have working `sudo`.
+
 ### 0. Turnkey Standalone Installation (100% Automatic, Zero Arguments)
 ```bash
 ./install.sh

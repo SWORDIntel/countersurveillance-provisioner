@@ -2,6 +2,13 @@
 # verify.sh — Counter-Surveillance Post-Deployment Verification Runner
 set -euo pipefail
 
+SUDO=()
+SUDO_N=()
+if (( EUID != 0 )); then
+    SUDO=(sudo)
+    SUDO_N=("${SUDO[@]}" -n)
+fi
+
 CY='\033[1;36m'
 G='\033[1;32m'
 Y='\033[1;33m'
@@ -23,7 +30,7 @@ fi
 
 # 2. Kernel Table Status
 echo -n "[*] Checking nftables table in kernel... "
-if sudo nft list table inet countersurveillance >/dev/null 2>&1; then
+if "${SUDO[@]}" nft list table inet countersurveillance >/dev/null 2>&1; then
     echo -e "${G}LOADED${NC}"
 else
     echo -e "${R}FAILED${NC} (Table 'countersurveillance' not in kernel)"
@@ -88,7 +95,7 @@ fi
 # the old "ping a Censys IP and watch it drop" test now asserts the WRONG
 # behavior (an outbound drop would mean the blunt-instrument list is back).
 echo -n "[*] Testing ingress/outbound scope separation... "
-RULESET=$(sudo nft list table inet countersurveillance 2>/dev/null || true)
+RULESET=$("${SUDO[@]}" nft list table inet countersurveillance 2>/dev/null || true)
 fail_scope() { echo -e "${R}FAIL${NC} ($1)"; exit 1; }
 
 if [ -z "$RULESET" ]; then fail_scope "countersurveillance table missing"; fi
@@ -131,9 +138,9 @@ if systemctl is-active --quiet tailscaled 2>/dev/null; then
     fi
 fi
 
-if command -v wg >/dev/null 2>&1 && [ -n "$(sudo -n wg show interfaces 2>/dev/null)" ]; then
+if command -v wg >/dev/null 2>&1 && [ -n "$("${SUDO_N[@]}" wg show interfaces 2>/dev/null)" ]; then
     echo -n "[*] Testing WireGuard handshakes... "
-    if sudo -n wg show all latest-handshakes 2>/dev/null | awk '$2 > 0 {found=1} END {exit !found}'; then
+    if "${SUDO_N[@]}" wg show all latest-handshakes 2>/dev/null | awk '$2 > 0 {found=1} END {exit !found}'; then
         echo -e "${G}PASS${NC}"
     else
         echo -e "${Y}WARN${NC} (no recent handshake)"
