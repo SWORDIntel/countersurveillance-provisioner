@@ -58,7 +58,9 @@ else
 fi
 
 echo -n "[*] Testing IPv4 ICMP egress (8.8.8.8, 1.1.1.1)... "
-if ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 && ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
+# Multiple probes avoid treating ordinary packet loss as a firewall regression.
+if ping -n -c 5 -W 2 8.8.8.8 >/dev/null 2>&1 \
+    && ping -n -c 5 -W 2 1.1.1.1 >/dev/null 2>&1; then
     echo -e "${G}PASS${NC}"
 else
     echo -e "${R}FAIL${NC}"
