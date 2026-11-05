@@ -116,8 +116,8 @@ deploy_chronosink_daemon() {
     fi
 
     echo "[*] Installing binary (${ARCH}) to /opt/chronosink/chronosink..."
-    "${SUDO[@]}" cp "${BIN_SOURCE}" /opt/chronosink/chronosink
-    "${SUDO[@]}" chmod 755 /opt/chronosink/chronosink
+    "${SUDO[@]}" install -m 0755 "${BIN_SOURCE}" /opt/chronosink/chronosink.new
+    "${SUDO[@]}" mv -f /opt/chronosink/chronosink.new /opt/chronosink/chronosink
 
     cat <<EOF | "${SUDO[@]}" tee /etc/chronosink/chronosink.env > /dev/null
 CITADEL_HOST=${CITADEL_HOST:-192.168.1.91}
