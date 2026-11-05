@@ -238,6 +238,19 @@ class PolicyTests(unittest.TestCase):
         text = render(self.directory, outbound=manifest("outbound", {"x": base}))
         self.assertIn("elements = { 93.184.216.34 }", text)
 
+    def test_ssh_sftp_ingress_is_allowed_before_source_filters(self):
+        inp = chain(render(self.directory), "input")
+
+        ssh_allow = "tcp dport 22 counter accept"
+        self.assertIn(ssh_allow, inp)
+        self.assertLess(inp.index(ssh_allow), inp.index("jump ingress_jail_drop"))
+        self.assertLess(inp.index(ssh_allow), inp.index("jump ingress_scanner_drop"))
+        self.assertIn(
+            "tcp dport { 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006 } counter drop",
+            inp,
+        )
+        self.assertNotIn("tcp dport { 22,", inp)
+
     def test_jump_desktop_specifically_allowed(self):
         text = render(self.directory, strict=True, web=False, logging=True)
         inp = chain(text, "input")

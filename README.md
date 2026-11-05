@@ -27,8 +27,8 @@ Production-grade, automated provisioning suite for deploying high-precision, dua
     • Drop @blocked_v4 / v6 (Censys, Shodan, Stretchoid)
                  │
  5. Perimeter Stealth (Strict Interface & Port Isolation)
-    • Non-LAN sources hitting management ports (22, 111,
-      2049, 3128, 3389, 5900, 7778, 7781, 8006) -> DROP
+    • SSH/SFTP TCP 22 -> ACCEPT (separate access controls apply)
+    • Non-LAN sources hitting other management ports -> DROP
                  │
  6. Decoy Trap Ports (23, 445, 5555, 8291, 80, 8080)
     • Stateful jailing: add @dynamic_scanners_v4/v6 (24h timeout)
@@ -50,7 +50,9 @@ Production-grade, automated provisioning suite for deploying high-precision, dua
    - Every node is completely autonomous and standalone: no cluster hubs, spoke tunnels, or cross-node synchronizations are required. Running `./install.sh` with zero arguments provisions the entire stack cleanly.
 
 2. **Strict Ingress Trust vs. Outbound Egress Separation**:
-   - `@trusted_mgmt_v4` & `@trusted_mgmt_v6`: Authorised management subnets (RFC1918, Loopback, Tailscale, Link-Local) strictly enforced on management daemons.
+   - `@trusted_mgmt_v4` & `@trusted_mgmt_v6`: Authorised management subnets (RFC1918,
+     Loopback, Tailscale, Link-Local) enforced on sensitive daemons. SSH/SFTP TCP 22 is
+     explicitly allowed by this ruleset and relies on separate access controls.
    - `@essential_egress_v4` & `@essential_egress_v6`: Developer outbound services (DNS, GitHub, PyPI, distro repos), evaluated strictly in `output` and `forward`.
 
 3. **Dual-Stack In-Kernel Parity**:

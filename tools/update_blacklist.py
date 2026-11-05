@@ -494,6 +494,9 @@ table inet countersurveillance {{
         # B. Conntrack: Established/related sessions bypass further checks
         ct state established,related accept
 
+        # SSH/SFTP is filtered by separate controls; keep port 22 reachable externally.
+        tcp dport 22 counter accept
+
         # C. Auto-Jailed Scanner Suppression
         ip saddr @dynamic_scanners_v4 tcp dport {{ 9080, 9445 }} counter accept
         ip6 saddr @dynamic_scanners_v6 tcp dport {{ 9080, 9445 }} counter accept
@@ -517,12 +520,12 @@ table inet countersurveillance {{
         udp dport {{ 5273, 35384-45385 }} counter accept
 
         # F. Management Perimeter Stealth:
-        # Strictly require source to be in @trusted_mgmt for sensitive daemons:
-        # SSH (22), NFS (111, 2049), Spice (3128), RDP (3389), VNC (5900),
-        # Corosync (UDP 5404-5405), Agent RPC (7778, 7781), Proxmox Web (8006).
+        # Require trusted sources for sensitive daemons other than SSH/SFTP:
+        # NFS (111, 2049), Spice (3128), RDP (3389), VNC (5900), Corosync,
+        # Agent RPC (7778, 7781), and Proxmox Web (8006).
         # Proxmox management and cluster traffic stays strictly LAN-only.
-        ip saddr != @trusted_mgmt_v4 tcp dport {{ 22, 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006 }} counter drop
-        ip6 saddr != @trusted_mgmt_v6 tcp dport {{ 22, 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006 }} counter drop
+        ip saddr != @trusted_mgmt_v4 tcp dport {{ 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006 }} counter drop
+        ip6 saddr != @trusted_mgmt_v6 tcp dport {{ 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006 }} counter drop
         ip saddr != @trusted_mgmt_v4 udp dport {{ 3389, 5404, 5405 }} counter drop
         ip6 saddr != @trusted_mgmt_v6 udp dport {{ 3389, 5404, 5405 }} counter drop
 
