@@ -100,11 +100,59 @@ EOF
     "${SUDO[@]}" chmod 0644 /etc/logrotate.d/cs-egress-drops
 }
 
+port_80_should_stay_free() {
+    if [[ "${CHRONOSINK_ALLOW_PORT_80:-0}" =~ ^(1|true|yes|on)$ ]]; then
+        return 1
+    fi
+    if [[ "${CHRONOSINK_DISABLE_PORT_80:-0}" =~ ^(1|true|yes|on)$ ]]; then
+        return 0
+    fi
+    local svc
+    for svc in caddy nginx apache2 httpd haproxy traefik; do
+        if "${SUDO[@]}" systemctl is-active --quiet "${svc}.service" 2>/dev/null || \
+           "${SUDO[@]}" systemctl is-enabled --quiet "${svc}.service" 2>/dev/null; then
+            return 0
+        fi
+    done
+    if [ -d /etc/letsencrypt/live ] || command -v certbot &>/dev/null; then
+        return 0
+    fi
+    if ss -Htlpn 'sport = :80' 2>/dev/null | grep -vq 'chronosink'; then
+        return 0
+    fi
+    return 1
+}
+
+resolve_chronosink_env() {
+    local raw_ports="${CHRONOSINK_RAW_PORTS:-9445,23,445,5555,8291}"
+    local http_ports="${CHRONOSINK_HTTP_PORTS:-}"
+    local disable_80="${CHRONOSINK_DISABLE_PORT_80:-0}"
+    local acme_webroot="${CHRONOSINK_ACME_WEBROOT:-/var/www/acme-challenge}"
+
+    if port_80_should_stay_free; then
+        disable_80="1"
+        if [ -z "${http_ports}" ]; then
+            http_ports="9080,8080,8443"
+        else
+            http_ports=$(printf '%s' "${http_ports}" | tr ',' '\n' | awk '$1 != "" && $1 != "80"' | paste -sd ',' -)
+        fi
+        echo "[*] Leaving port 80 free for web/TLS & Let's Encrypt HTTP-01 (ChronoSink HTTP ports: ${http_ports})."
+    elif [ -z "${http_ports}" ]; then
+        http_ports="9080,8080,8443,80"
+    fi
+
+    RESOLVED_CHRONOSINK_HTTP_PORTS="${http_ports}"
+    RESOLVED_CHRONOSINK_RAW_PORTS="${raw_ports}"
+    RESOLVED_CHRONOSINK_DISABLE_80="${disable_80}"
+    RESOLVED_CHRONOSINK_ACME_WEBROOT="${acme_webroot}"
+}
+
 deploy_chronosink_daemon() {
     echo -e "\n${CY}=== Step 2: Deploying ChronoSink Go Daemon on Local Host ===${NC}"
 
     ensure_event_dirs
     install_logrotate
+    resolve_chronosink_env
     ARCH=$(uname -m)
     BIN_SOURCE="${SCRIPT_DIR}/honeypot/bin/chronosink-linux-amd64"
     if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
@@ -123,7 +171,14 @@ deploy_chronosink_daemon() {
 CITADEL_HOST=${CITADEL_HOST:-192.168.1.91}
 CITADEL_PORT=${CITADEL_PORT:-17872}
 QIHSE_EVENTS_FILE=${QIHSE_EVENTS_FILE:-/opt/qihse-data/events/countersurveillance_alerts.jsonl}
+CHRONOSINK_HTTP_PORTS=${RESOLVED_CHRONOSINK_HTTP_PORTS}
+CHRONOSINK_RAW_PORTS=${RESOLVED_CHRONOSINK_RAW_PORTS}
+CHRONOSINK_DISABLE_PORT_80=${RESOLVED_CHRONOSINK_DISABLE_80}
+CHRONOSINK_ACME_WEBROOT=${RESOLVED_CHRONOSINK_ACME_WEBROOT}
 EOF
+    if [ -n "${CHRONOSINK_ACME_PROXY:-}" ]; then
+        printf 'CHRONOSINK_ACME_PROXY=%s\n' "${CHRONOSINK_ACME_PROXY}" | "${SUDO[@]}" tee -a /etc/chronosink/chronosink.env > /dev/null
+    fi
 
     "${SUDO[@]}" cp "${SCRIPT_DIR}/honeypot/chronosink.service" /etc/systemd/system/chronosink.service
     "${SUDO[@]}" systemctl daemon-reload
@@ -300,6 +355,7 @@ deploy_local_container() {
         exit 1
     fi
 
+    resolve_chronosink_env
     echo "[*] Building ChronoSink container image via ${CONTAINER_ENGINE}..."
     ${CONTAINER_ENGINE} build -t chronosink:latest -f "${SCRIPT_DIR}/honeypot/Dockerfile" "${SCRIPT_DIR}/honeypot"
 
@@ -313,6 +369,10 @@ deploy_local_container() {
         -e CITADEL_HOST="${CITADEL_HOST:-192.168.1.91}" \
         -e CITADEL_PORT="${CITADEL_PORT:-17872}" \
         -e QIHSE_EVENTS_FILE="${QIHSE_EVENTS_FILE:-/opt/qihse-data/events/countersurveillance_alerts.jsonl}" \
+        -e CHRONOSINK_HTTP_PORTS="${RESOLVED_CHRONOSINK_HTTP_PORTS}" \
+        -e CHRONOSINK_RAW_PORTS="${RESOLVED_CHRONOSINK_RAW_PORTS}" \
+        -e CHRONOSINK_DISABLE_PORT_80="${RESOLVED_CHRONOSINK_DISABLE_80}" \
+        -e CHRONOSINK_ACME_WEBROOT="${RESOLVED_CHRONOSINK_ACME_WEBROOT}" \
         chronosink:latest
 
     deploy_filter

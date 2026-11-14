@@ -39,6 +39,8 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 # Writable log and event spool paths (prefixed with - to avoid namespace failure if dir absent)
 ReadWritePaths=/var/log/chronosink -/opt/qihse-data/events /tmp
+# Read-only ACME webroot paths so Let's Encrypt HTTP-01 challenges can still be served if port 80 is bound
+ReadOnlyPaths=-/var/www -/var/lib/letsencrypt -/run/acme
 
 [Install]
 WantedBy=multi-user.target

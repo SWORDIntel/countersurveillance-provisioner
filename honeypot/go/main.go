@@ -12,6 +12,7 @@ import (
 	mrand "math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -34,12 +35,15 @@ const (
 
 	MaxConcurrentConnections = 256
 	MaxProbePayloadBytes     = 4096
+	ACMEChallengePrefix      = "/.well-known/acme-challenge/"
 )
 
 var (
-	httpPorts       = []int{9080, 8080, 8443, 80}
-	rawPorts        = []int{9445, 23, 445, 5555, 8291}
-	gzipBomb        []byte
+	defaultHTTPPorts = []int{9080, 8080, 8443, 80}
+	defaultRawPorts  = []int{9445, 23, 445, 5555, 8291}
+	httpPorts        = append([]int(nil), defaultHTTPPorts...)
+	rawPorts         = append([]int(nil), defaultRawPorts...)
+	gzipBomb         []byte
 	hostname        string
 	deceptionMode   = "bounded" // "bounded" (default, harmless) or "bomb" (decompression bomb)
 	httpConnLimiter = make(chan struct{}, 128)
@@ -95,6 +99,67 @@ func randomHex(bytesLen int) string {
 	return hex.EncodeToString(b)
 }
 
+func isTruthyEnv(key string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+func isFalsyEnv(key string) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return false
+	}
+	s := strings.ToLower(strings.TrimSpace(v))
+	return s == "0" || s == "false" || s == "no" || s == "off"
+}
+
+func parsePortsEnv(envKey string, defaults []int) []int {
+	raw, ok := os.LookupEnv(envKey)
+	if !ok {
+		return append([]int(nil), defaults...)
+	}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || strings.EqualFold(trimmed, "none") {
+		return nil
+	}
+	seen := make(map[int]struct{})
+	var ports []int
+	for _, part := range strings.Split(trimmed, ",") {
+		pStr := strings.TrimSpace(part)
+		if pStr == "" {
+			continue
+		}
+		p, err := strconv.Atoi(pStr)
+		if err != nil || p < 1 || p > 65535 {
+			continue
+		}
+		if _, dup := seen[p]; !dup {
+			seen[p] = struct{}{}
+			ports = append(ports, p)
+		}
+	}
+	return ports
+}
+
+func filterPort(ports []int, exclude int) []int {
+	out := make([]int, 0, len(ports))
+	for _, p := range ports {
+		if p != exclude {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func resolvePortsFromEnv() ([]int, []int) {
+	hp := parsePortsEnv("CHRONOSINK_HTTP_PORTS", defaultHTTPPorts)
+	if isTruthyEnv("CHRONOSINK_DISABLE_PORT_80") || isFalsyEnv("CHRONOSINK_ALLOW_PORT_80") {
+		hp = filterPort(hp, 80)
+	}
+	rp := parsePortsEnv("CHRONOSINK_RAW_PORTS", defaultRawPorts)
+	return hp, rp
+}
+
 func init() {
 	var err error
 	hostname, err = os.Hostname()
@@ -106,6 +171,8 @@ func init() {
 	if modeEnv == "bomb" || modeEnv == "gzip" {
 		deceptionMode = "bomb"
 	}
+
+	httpPorts, rawPorts = resolvePortsFromEnv()
 
 	// Pre-generate 100 MB of compressed null bytes (~100 KB on wire, 100 MB in memory)
 	buf := new(bytes.Buffer)
@@ -204,7 +271,166 @@ func dispatchTelemetry(srcIP string, srcPort int, dstPort int, protocol string, 
 	}
 }
 
+func isValidACMEToken(token string) bool {
+	if token == "" || len(token) > 256 {
+		return false
+	}
+	for i := 0; i < len(token); i++ {
+		c := token[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func appendSplitPaths(dirs []string, raw string, appendWellKnown bool) []string {
+	for _, part := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ':' }) {
+		p := filepath.Clean(strings.TrimSpace(part))
+		if p == "" || p == "." {
+			continue
+		}
+		if appendWellKnown {
+			dirs = append(dirs, filepath.Join(p, ".well-known", "acme-challenge"))
+		}
+		dirs = append(dirs, p)
+	}
+	return dirs
+}
+
+func acmeChallengeDirs() []string {
+	var dirs []string
+	for _, key := range []string{"CHRONOSINK_ACME_DIR", "ACME_CHALLENGE_DIR"} {
+		if v := os.Getenv(key); v != "" {
+			dirs = appendSplitPaths(dirs, v, false)
+		}
+	}
+	for _, key := range []string{"CHRONOSINK_ACME_WEBROOT", "ACME_WEBROOT"} {
+		if v := os.Getenv(key); v != "" {
+			dirs = appendSplitPaths(dirs, v, true)
+		}
+	}
+	dirs = append(dirs,
+		"/var/www/acme-challenge/.well-known/acme-challenge",
+		"/var/www/html/.well-known/acme-challenge",
+		"/var/www/letsencrypt/.well-known/acme-challenge",
+		"/var/www/certbot/.well-known/acme-challenge",
+		"/var/lib/letsencrypt/http_challenges",
+		"/run/acme/.well-known/acme-challenge",
+		"/run/acme",
+	)
+	return dirs
+}
+
+func readACMEChallenge(token string) ([]byte, bool) {
+	for _, dir := range acmeChallengeDirs() {
+		baseAbs, err := filepath.Abs(dir)
+		if err != nil {
+			continue
+		}
+		candidate := filepath.Join(baseAbs, token)
+		candAbs, err := filepath.Abs(candidate)
+		if err != nil || filepath.Dir(candAbs) != baseAbs {
+			continue
+		}
+		info, err := os.Stat(candAbs)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 16384 {
+			continue
+		}
+		data, err := os.ReadFile(candAbs)
+		if err == nil {
+			return data, true
+		}
+	}
+	return nil, false
+}
+
+func proxyACMEChallenge(w http.ResponseWriter, r *http.Request, proxyBase, token string) bool {
+	base, err := url.Parse(strings.TrimSpace(proxyBase))
+	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
+		return false
+	}
+	target := base.ResolveReference(&url.URL{Path: ACMEChallengePrefix + token})
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), nil)
+	if err != nil {
+		return false
+	}
+	if r.Host != "" {
+		req.Host = r.Host
+	}
+	client := &http.Client{
+		Timeout: 4 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	} else {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "close")
+	w.WriteHeader(resp.StatusCode)
+	if r.Method != http.MethodHead {
+		_, _ = io.Copy(w, io.LimitReader(resp.Body, 16384))
+	}
+	return true
+}
+
+func serveACMEChallenge(w http.ResponseWriter, r *http.Request) bool {
+	if !strings.HasPrefix(r.URL.Path, ACMEChallengePrefix) {
+		return false
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		w.Header().Set("Connection", "close")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return true
+	}
+
+	token := strings.TrimPrefix(r.URL.Path, ACMEChallengePrefix)
+	if !isValidACMEToken(token) {
+		w.Header().Set("Connection", "close")
+		http.NotFound(w, r)
+		return true
+	}
+
+	if data, ok := readACMEChallenge(token); ok {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		w.Header().Set("Connection", "close")
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write(data)
+		}
+		return true
+	}
+
+	for _, key := range []string{"CHRONOSINK_ACME_PROXY", "ACME_PROXY_URL"} {
+		if proxyBase := strings.TrimSpace(os.Getenv(key)); proxyBase != "" {
+			if proxyACMEChallenge(w, r, proxyBase, token) {
+				return true
+			}
+		}
+	}
+
+	w.Header().Set("Connection", "close")
+	http.NotFound(w, r)
+	return true
+}
+
 func handleHTTP(w http.ResponseWriter, r *http.Request, bindPort int) {
+	if serveACMEChallenge(w, r) {
+		return
+	}
 	// Concurrency bounding
 	select {
 	case httpConnLimiter <- struct{}{}:

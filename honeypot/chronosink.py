@@ -16,13 +16,50 @@ import json
 import logging
 import os
 import random
+import re
 import signal
 import socket
 import sys
 import zlib
 
-LISTEN_HTTP_PORTS = [9080, 80, 8080, 8443]
-LISTEN_RAW_PORTS = [9445, 23, 445, 5555, 8291]
+DEFAULT_HTTP_PORTS = [9080, 8080, 8443, 80]
+DEFAULT_RAW_PORTS = [9445, 23, 445, 5555, 8291]
+ACME_CHALLENGE_PREFIX = "/.well-known/acme-challenge/"
+ACME_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
+
+
+def _parse_ports_env(env_key: str, defaults: list[int]) -> list[int]:
+    raw = os.getenv(env_key)
+    if raw is None:
+        return list(defaults)
+    stripped = raw.strip()
+    if not stripped or stripped.lower() == "none":
+        return []
+    ports: list[int] = []
+    for part in stripped.split(","):
+        p_str = part.strip()
+        if not p_str:
+            continue
+        try:
+            p = int(p_str)
+        except ValueError:
+            continue
+        if 1 <= p <= 65535 and p not in ports:
+            ports.append(p)
+    return ports
+
+
+def _resolve_ports() -> tuple[list[int], list[int]]:
+    http_ports = _parse_ports_env("CHRONOSINK_HTTP_PORTS", DEFAULT_HTTP_PORTS)
+    disable_80 = os.getenv("CHRONOSINK_DISABLE_PORT_80", "").strip().lower() in ("1", "true", "yes", "on")
+    allow_80 = os.getenv("CHRONOSINK_ALLOW_PORT_80", "").strip().lower()
+    if disable_80 or allow_80 in ("0", "false", "no", "off"):
+        http_ports = [p for p in http_ports if p != 80]
+    raw_ports = _parse_ports_env("CHRONOSINK_RAW_PORTS", DEFAULT_RAW_PORTS)
+    return http_ports, raw_ports
+
+
+LISTEN_HTTP_PORTS, LISTEN_RAW_PORTS = _resolve_ports()
 LOG_FILE = "/var/log/chronosink/probes.jsonl"
 LOG_DIR = "/var/log/chronosink"
 
@@ -116,6 +153,48 @@ async def log_event(event_type: str, src_ip: str, src_port: int, dst_port: int, 
     except Exception:
         pass
 
+def _acme_challenge_dirs() -> list[str]:
+    dirs: list[str] = []
+    for key in ("CHRONOSINK_ACME_DIR", "ACME_CHALLENGE_DIR"):
+        raw = os.getenv(key, "")
+        for part in re.split(r"[:,]", raw):
+            p = part.strip()
+            if p:
+                dirs.append(os.path.normpath(p))
+    for key in ("CHRONOSINK_ACME_WEBROOT", "ACME_WEBROOT"):
+        raw = os.getenv(key, "")
+        for part in re.split(r"[:,]", raw):
+            p = part.strip()
+            if p:
+                norm = os.path.normpath(p)
+                dirs.append(os.path.join(norm, ".well-known", "acme-challenge"))
+                dirs.append(norm)
+    dirs.extend([
+        "/var/www/acme-challenge/.well-known/acme-challenge",
+        "/var/www/html/.well-known/acme-challenge",
+        "/var/www/letsencrypt/.well-known/acme-challenge",
+        "/var/www/certbot/.well-known/acme-challenge",
+        "/var/lib/letsencrypt/http_challenges",
+        "/run/acme/.well-known/acme-challenge",
+        "/run/acme",
+    ])
+    return dirs
+
+
+def _read_acme_challenge(token: str) -> bytes | None:
+    if not ACME_TOKEN_RE.match(token):
+        return None
+    for base in _acme_challenge_dirs():
+        base_abs = os.path.abspath(base)
+        cand = os.path.abspath(os.path.join(base_abs, token))
+        if os.path.dirname(cand) != base_abs:
+            continue
+        if os.path.isfile(cand) and os.path.getsize(cand) <= 16384:
+            with open(cand, "rb") as f:
+                return f.read()
+    return None
+
+
 async def handle_http_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, bind_port: int):
     async with HTTP_SEMAPHORE:
         peer = writer.get_extra_info('peername')
@@ -129,6 +208,44 @@ async def handle_http_client(reader: asyncio.StreamReader, writer: asyncio.Strea
             header_data = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5.0)
             decoded = header_data.decode('latin-1', errors='replace').split("\r\n")
             req_line = decoded[0] if decoded else ""
+            req_parts = req_line.split()
+            req_method = req_parts[0].upper() if len(req_parts) >= 1 else ""
+            req_target = req_parts[1].split("?", 1)[0] if len(req_parts) >= 2 else ""
+
+            if req_target.startswith(ACME_CHALLENGE_PREFIX):
+                if req_method not in ("GET", "HEAD"):
+                    body = b"method not allowed\n"
+                    resp = (
+                        "HTTP/1.1 405 Method Not Allowed\r\n"
+                        "Allow: GET, HEAD\r\n"
+                        f"Content-Length: {len(body)}\r\n"
+                        "Connection: close\r\n\r\n"
+                    ).encode("latin-1") + body
+                    writer.write(resp)
+                else:
+                    token = req_target[len(ACME_CHALLENGE_PREFIX):]
+                    data = _read_acme_challenge(token)
+                    if data is not None:
+                        resp_hdr = (
+                            "HTTP/1.1 200 OK\r\n"
+                            "Content-Type: text/plain; charset=utf-8\r\n"
+                            "Cache-Control: no-store\r\n"
+                            f"Content-Length: {len(data)}\r\n"
+                            "Connection: close\r\n\r\n"
+                        ).encode("latin-1")
+                        writer.write(resp_hdr if req_method == "HEAD" else resp_hdr + data)
+                    else:
+                        body = b"404 page not found\n"
+                        resp_hdr = (
+                            "HTTP/1.1 404 Not Found\r\n"
+                            "Content-Type: text/plain; charset=utf-8\r\n"
+                            f"Content-Length: {len(body)}\r\n"
+                            "Connection: close\r\n\r\n"
+                        ).encode("latin-1")
+                        writer.write(resp_hdr if req_method == "HEAD" else resp_hdr + body)
+                await asyncio.wait_for(writer.drain(), timeout=5.0)
+                return
+
             headers = {}
             for line in decoded[1:]:
                 if ": " in line:

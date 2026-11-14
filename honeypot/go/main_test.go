@@ -5,6 +5,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -125,5 +128,118 @@ func TestTelemetryWorkerChannel(t *testing.T) {
 	msg := <-telemetryChan
 	if !strings.Contains(string(msg), "chronosink-go") {
 		t.Fatalf("Telemetry missing expected process identifier: %s", string(msg))
+	}
+}
+
+func TestResolvePortsFromEnv(t *testing.T) {
+	t.Setenv("CHRONOSINK_HTTP_PORTS", "")
+	t.Setenv("CHRONOSINK_DISABLE_PORT_80", "")
+	t.Setenv("CHRONOSINK_ALLOW_PORT_80", "")
+	os.Unsetenv("CHRONOSINK_HTTP_PORTS")
+	os.Unsetenv("CHRONOSINK_DISABLE_PORT_80")
+	os.Unsetenv("CHRONOSINK_ALLOW_PORT_80")
+
+	hp, _ := resolvePortsFromEnv()
+	if !reflect.DeepEqual(hp, []int{9080, 8080, 8443, 80}) {
+		t.Fatalf("Expected default HTTP ports, got %v", hp)
+	}
+
+	t.Setenv("CHRONOSINK_DISABLE_PORT_80", "1")
+	hp, _ = resolvePortsFromEnv()
+	if !reflect.DeepEqual(hp, []int{9080, 8080, 8443}) {
+		t.Fatalf("Expected port 80 filtered out, got %v", hp)
+	}
+
+	t.Setenv("CHRONOSINK_DISABLE_PORT_80", "0")
+	t.Setenv("CHRONOSINK_HTTP_PORTS", "9080,8080,8443")
+	hp, _ = resolvePortsFromEnv()
+	if !reflect.DeepEqual(hp, []int{9080, 8080, 8443}) {
+		t.Fatalf("Expected custom HTTP ports without 80, got %v", hp)
+	}
+}
+
+func TestACMEChallengeServedFromWebroot(t *testing.T) {
+	webroot := t.TempDir()
+	chalDir := filepath.Join(webroot, ".well-known", "acme-challenge")
+	if err := os.MkdirAll(chalDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	token := "token-123_ABC"
+	keyAuth := "token-123_ABC.thumbprint456"
+	if err := os.WriteFile(filepath.Join(chalDir, token), []byte(keyAuth), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("CHRONOSINK_ACME_WEBROOT", webroot)
+	req := httptest.NewRequest("GET", "http://swordintelligence.airforce/.well-known/acme-challenge/"+token, nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	start := time.Now()
+	handleHTTP(rec, req, 80)
+
+	if time.Since(start) > 200*time.Millisecond {
+		t.Fatalf("ACME challenge unexpectedly incurred tarpit delay")
+	}
+	res := rec.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for ACME challenge, got %d", res.StatusCode)
+	}
+	if res.Header.Get("Server") == RetroServer {
+		t.Fatalf("ACME response should not include retro Apache Server header")
+	}
+	if res.Header.Get("Content-Encoding") != "" {
+		t.Fatalf("ACME response should not be compressed, got %q", res.Header.Get("Content-Encoding"))
+	}
+	body, _ := io.ReadAll(res.Body)
+	if string(body) != keyAuth {
+		t.Fatalf("ACME body mismatch: got %q want %q", string(body), keyAuth)
+	}
+}
+
+func TestACMEChallengeMissingAndTraversal(t *testing.T) {
+	t.Setenv("CHRONOSINK_ACME_WEBROOT", t.TempDir())
+	for _, path := range []string{
+		"/.well-known/acme-challenge/nonexistent-token",
+		"/.well-known/acme-challenge/../../etc/passwd",
+		"/.well-known/acme-challenge/",
+	} {
+		req := httptest.NewRequest("GET", "http://example.com"+path, nil)
+		rec := httptest.NewRecorder()
+		handleHTTP(rec, req, 80)
+		res := rec.Result()
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("Path %q: expected 404, got %d", path, res.StatusCode)
+		}
+		if res.Header.Get("Server") == RetroServer {
+			t.Fatalf("Path %q: ACME 404 should not emit retro Apache headers", path)
+		}
+	}
+}
+
+func TestACMEChallengeProxy(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/acme-challenge/proxy-tok" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = io.WriteString(w, "proxy-tok.key")
+	}))
+	defer backend.Close()
+
+	t.Setenv("CHRONOSINK_ACME_WEBROOT", t.TempDir())
+	t.Setenv("CHRONOSINK_ACME_PROXY", backend.URL)
+
+	req := httptest.NewRequest("GET", "http://swordintelligence.airforce/.well-known/acme-challenge/proxy-tok", nil)
+	rec := httptest.NewRecorder()
+	handleHTTP(rec, req, 80)
+
+	res := rec.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 from ACME proxy, got %d", res.StatusCode)
+	}
+	body, _ := io.ReadAll(res.Body)
+	if string(body) != "proxy-tok.key" {
+		t.Fatalf("Expected proxied ACME payload, got %q", string(body))
 	}
 }
