@@ -60,3 +60,11 @@
   - [x] Non-fatal WireGuard handshake verification in `verify.sh` avoiding false rollback triggers
   - [x] Full purge teardown in `uninstall.sh` (mangled tables, WireGuard units, and directory artifacts)
   - [x] Pre-deployment backup restoration or hostname-detected standard OS firewall restoration in `uninstall.sh`
+
+- [x] **Phase 11: Fail-Loud Perimeter Guard & Self-Healing**
+  - [x] `tools/nft_guard.py`: preflight validation, atomic apply, post-load verification, and snapshot rollback
+  - [x] Five-channel alerting on every failure path: journal `daemon.alert`, `/dev/kmsg`, `wall`, QIHSE JSONL, optional webhook
+  - [x] `countersurveillance-alert.service` as the block unit's `OnFailure=` handler (a red unit alone was not enough)
+  - [x] `countersurveillance-health.timer` (5 min) detects and re-applies a perimeter table that vanished after boot
+  - [x] Removed the hard `socket cgroupv2` dependency that let one crashed helper abort the entire ruleset load
+  - [x] Regression tests (`tests/test_nft_guard.py`) covering preflight failure, load failure, verification rollback, and health self-heal
