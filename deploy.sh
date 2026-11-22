@@ -188,11 +188,29 @@ EOF
     echo -e "${G}[+] ChronoSink Go daemon deployed and active.${NC}"
 }
 
+# Render the ruleset. With a committed egress pin, every host renders the same
+# whitelist; CS_REFRESH_EGRESS=1 re-resolves and re-pins deliberately.
+refresh_egress() {
+    local pin="${CS_EGRESS_PIN:-${SCRIPT_DIR}/configs/egress.pinned.json}"
+    if [ "${CS_REFRESH_EGRESS:-0}" = "1" ]; then
+        echo "[*] Re-resolving egress whitelist (CS_REFRESH_EGRESS=1) and re-pinning..."
+        python3 "${SCRIPT_DIR}/tools/update_blacklist.py" --emit-pin "$pin"
+    elif [ -f "$pin" ]; then
+        echo "[*] Egress whitelist from pin: ${pin}"
+        echo "    (hosts converge on this list; CS_REFRESH_EGRESS=1 to re-resolve)"
+        python3 "${SCRIPT_DIR}/tools/update_blacklist.py" --use-pin "$pin"
+    else
+        echo "[!] No egress pin at ${pin}; resolving DNS (per-host whitelist)."
+        echo "    Pin once with: CS_REFRESH_EGRESS=1 $0 filter"
+        python3 "${SCRIPT_DIR}/tools/update_blacklist.py"
+    fi
+}
+
 deploy_filter() {
     echo -e "\n${CY}=== Step 3: Deploying In-Kernel Packet Filter (with Watchdog) ===${NC}"
     ensure_event_dirs
     install_logrotate
-    python3 "${SCRIPT_DIR}/tools/update_blacklist.py"
+    refresh_egress
 
     echo "[*] Preflight syntax validation..."
     "${SUDO[@]}" nft -c -f "${CONFIG_NFT}"
@@ -443,7 +461,7 @@ deploy_remote() {
     local SUB_CMD="${2:-auto}"
     echo -e "\n${CY}=== Provisioning Remote Node: ${TARGET} (Action: ${SUB_CMD}) ===${NC}"
 
-    python3 "${SCRIPT_DIR}/tools/update_blacklist.py"
+    refresh_egress
     echo "[*] Transferring provisioner suite to ${TARGET}..."
     ssh "${TARGET}" "mkdir -p /tmp/cs-provisioner"
     scp -rq "${SCRIPT_DIR}/"* "${TARGET}:/tmp/cs-provisioner/"

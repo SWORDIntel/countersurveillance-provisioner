@@ -307,3 +307,31 @@ be the bytes that were validated:
 
 Why it matters: the table reporting `chains=8` looks identical whether the new
 policy or the rolled-back one is live. Only the file hash distinguishes them.
+
+### 10. Reviewed Egress Pin (host convergence)
+
+By default `update_blacklist.py` resolves the egress domains from DNS at render
+time, so two hosts deployed minutes apart get different `@essential_egress`
+sets — same policy, different IP snapshot. For reproducible nodes, commit a
+**pin**: `configs/egress.pinned.json` records the reviewed domain → address
+mapping.
+
+| command | effect |
+|---------|--------|
+| `tools/update_blacklist.py --use-pin PATH` | render from the pin, no DNS |
+| `tools/update_blacklist.py --emit-pin [PATH]` | resolve once and write the pin |
+| `tools/update_blacklist.py --check-pin [PATH]` | compare pin to live DNS, exit 1 on large drift |
+
+`deploy.sh` consumes the pin automatically when the file exists
+(`CS_EGRESS_PIN` overrides the path); set `CS_REFRESH_EGRESS=1` to re-resolve
+and re-pin deliberately. Rendering from a pin is byte-deterministic, so every
+node converges on one reviewed list.
+
+The daily refresh unit gained a drift gate: `--check-pin` runs as
+`ExecStartPre`. Routine CDN rotation below `--max-drift-ratio` (default 25 % of
+pinned addresses) is reported and tolerated; a larger shift fails the unit so
+it shows in `systemctl --failed` instead of being adopted silently.
+
+Workflow: re-pin on one reviewed host (`CS_REFRESH_EGRESS=1 ./deploy.sh filter`),
+review the `configs/egress.pinned.json` diff, commit it, then deploy — all nodes
+render the same ruleset.

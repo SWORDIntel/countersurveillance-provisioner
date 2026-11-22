@@ -70,3 +70,5 @@
   - [x] Regression tests (`tests/test_nft_guard.py`) covering preflight failure, load failure, verification rollback, and health self-heal
   - [x] `deploy.sh`: SHA-256 assertion of the installed ruleset (before and after verification), file-level rollback, and a 600 s `CS_WATCHDOG_SECS` fuse shared by the local and remote-SSH watchdogs
   - [x] `tests/test_deploy_safeguards.py` pins both regressions: the short fuse and the missing integrity check
+  - [x] Reviewed egress pin (`configs/egress.pinned.json`): `--use-pin` renders byte-deterministically without DNS, `--emit-pin` records the reviewed mapping, and `deploy.sh` consumes it so hosts converge on one list (`CS_REFRESH_EGRESS=1` re-pins)
+  - [x] Drift gate on the daily refresh (`--check-pin`, 25 % address tolerance) so CDN churn is reported but a large unexplained shift fails loudly

@@ -64,6 +64,14 @@ class DeploySafeguardTests(unittest.TestCase):
         restart_at = DEPLOY.index("systemctl restart countersurveillance-block.service")
         self.assertLess(install_at, restart_at)
 
+    def test_egress_pin_is_consumed_unless_refresh_requested(self):
+        self.assertIn("refresh_egress()", DEPLOY)
+        self.assertIn('--use-pin "$pin"', DEPLOY)
+        self.assertIn('--emit-pin "$pin"', DEPLOY)
+        self.assertIn('CS_REFRESH_EGRESS', DEPLOY)
+        # Both the local and remote paths must go through the shared helper.
+        self.assertEqual(DEPLOY.count("refresh_egress\n"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

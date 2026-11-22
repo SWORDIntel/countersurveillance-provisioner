@@ -11,6 +11,11 @@ WorkingDirectory=/opt/countersurveillance
 # This file is intentionally mandatory (no "-" prefix): if it is missing the
 # unit must fail loudly rather than silently downgrade a strict node to accept.
 EnvironmentFile=/etc/countersurveillance/egress.mode
+# Drift gate: when a reviewed egress pin is committed, the daily run must not
+# silently adopt newly resolved addresses. A drifted pin fails this unit (loud
+# in `systemctl --failed`) until the pin is deliberately re-emitted. Hosts
+# without a pin are unaffected.
+ExecStartPre=/opt/countersurveillance/tools/update_blacklist.py --check-pin /opt/countersurveillance/configs/egress.pinned.json
 ExecStart=/opt/countersurveillance/deploy.sh filter
 # deploy.sh preflights, arms a rollback watchdog and reverts on verification
 # failure; update_blacklist.py refuses to emit a thin whitelist if DNS is down.

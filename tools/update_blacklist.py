@@ -15,6 +15,7 @@ import os
 import socket
 import sys
 import tempfile
+import time
 from datetime import date
 from urllib.parse import urlsplit
 
@@ -23,6 +24,9 @@ JSON_PATH = os.path.join(BASE_DIR, "data", "scanner_subnets.json")
 DOMAINS_PATH = os.path.join(BASE_DIR, "data", "egress_domains.json")
 OUTBOUND_PATH = os.path.join(BASE_DIR, "data", "outbound_blocks.json")
 OUTPUT_NFT = os.path.join(BASE_DIR, "configs", "countersurveillance.nft")
+# Reviewed, reproducible egress snapshot. When present, deploys consume this
+# instead of re-resolving DNS, so every host renders an identical whitelist.
+PIN_PATH = os.path.join(BASE_DIR, "configs", "egress.pinned.json")
 
 # Refuse to emit a ruleset if the domain list resolves too thinly: under
 # STRICT_EGRESS an incomplete whitelist is a self-inflicted egress outage.
@@ -195,6 +199,111 @@ def load_egress_domains():
     return list(data.get("required", [])), list(data.get("optional", []))
 
 
+def _sha256_file(path):
+    import hashlib
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def load_pin(path):
+    with open(path) as f:
+        pin = json.load(f)
+    if pin.get("schema") != 1:
+        raise ValueError(f"{path}: unsupported pin schema {pin.get('schema')!r}")
+    for family in ("v4", "v6"):
+        if not isinstance(pin.get(family), dict):
+            raise ValueError(f"{path}: missing {family} map")
+    return pin
+
+
+def write_pin(path, required, optional, resolved_v4, resolved_v6, ruleset_sha256):
+    pin = {
+        "schema": 1,
+        "generated_at": os.environ.get(
+            "SOURCE_DATE_EPOCH_ISO",
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        ),
+        "domains_source_sha256": _sha256_file(DOMAINS_PATH) if os.path.exists(DOMAINS_PATH) else "",
+        "required": sorted(required),
+        "optional": sorted(optional),
+        "v4": {k: sorted(v) for k, v in sorted(resolved_v4.items())},
+        "v6": {k: sorted(v) for k, v in sorted(resolved_v6.items())},
+        "ruleset_sha256": ruleset_sha256,
+    }
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".egress-pin-", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(pin, f, indent=2, sort_keys=True)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def resolve_from_pin(pin, required, optional):
+    """Return per-family address sets from a pin, enforcing required coverage."""
+    missing = [
+        name
+        for name in required
+        if name not in pin["v4"] and name not in pin["v6"]
+    ]
+    if missing:
+        raise ValueError(
+            "pin lacks required egress domains: " + ", ".join(sorted(missing))
+        )
+    out = {}
+    for family, key in (("v4", "v4"), ("v6", "v6")):
+        merged = {}
+        for name in required + optional:
+            addrs = pin[key].get(name)
+            if addrs:
+                merged[name] = list(addrs)
+        out[family] = merged
+    return out["v4"], out["v6"]
+
+
+def resolve_map(names, family):
+    """Resolve per domain (unlike resolve_domains, keeps the attribution)."""
+    mapping, failed = {}, []
+    for name in names:
+        try:
+            infos = socket.getaddrinfo(name, None, family)
+        except (socket.gaierror, UnicodeError) as exc:
+            failed.append((name, exc))
+            continue
+        mapping[name] = sorted({info[4][0] for info in infos})
+    return mapping, failed
+
+
+def flatten(mapping):
+    return sorted({addr for addrs in mapping.values() for addr in addrs})
+
+
+def check_pin_drift(pin, required, optional):
+    """Compare the pin against live DNS. Returns a list of human-readable drift lines."""
+    drift = []
+    for family, key in ((socket.AF_INET, "v4"), (socket.AF_INET6, "v6")):
+        live, _ = resolve_map(required + optional, family)
+        for name in sorted(set(list(live) + list(pin[key]))):
+            pinned = set(pin[key].get(name, []))
+            current = set(live.get(name, []))
+            added = sorted(current - pinned)
+            removed = sorted(pinned - current)
+            if added or removed:
+                bits = []
+                if added:
+                    bits.append("+" + ",".join(added))
+                if removed:
+                    bits.append("-" + ",".join(removed))
+                drift.append(f"{key} {name}: " + " ".join(bits))
+    return drift
+
+
 def collapse_and_clean(net_strings, ip_cls):
     nets = [ip_cls(s.strip()) for s in net_strings if s.strip()]
     collapsed = list(ipaddress.collapse_addresses(nets))
@@ -272,19 +381,114 @@ def validate_overlaps(blocked, protected, label):
                 raise ValueError(f"{label} {net} overlaps protected infrastructure {other}")
 
 
-def main():
+def main(argv=None):
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Render the countersurveillance nftables ruleset.",
+        epilog="Without --use-pin the egress whitelist is re-resolved from DNS, "
+        "which makes each host's ruleset differ by resolution instant.",
+    )
+    parser.add_argument(
+        "--use-pin",
+        metavar="PATH",
+        help="consume a reviewed egress pin instead of resolving DNS (reproducible)",
+    )
+    parser.add_argument(
+        "--emit-pin",
+        metavar="PATH",
+        nargs="?",
+        const=PIN_PATH,
+        help=f"write the resolved whitelist as a pin (default: {PIN_PATH})",
+    )
+    parser.add_argument(
+        "--check-pin",
+        metavar="PATH",
+        nargs="?",
+        const=PIN_PATH,
+        help="compare a pin against live DNS and exit 1 on drift (no write)",
+    )
+    parser.add_argument(
+        "--max-drift-ratio",
+        type=float,
+        default=0.25,
+        help="with --check-pin, tolerate small CDN rotation below this fraction "
+        "of pinned addresses (default 0.25); larger change exits 1",
+    )
+    args = parser.parse_args([] if argv is None else argv)
+
     raw_blocked_v4, raw_blocked_v6 = load_scoped_targets(JSON_PATH, "ingress")
     outbound_v4, outbound_v6 = load_scoped_targets(OUTBOUND_PATH, "outbound")
 
     trusted_v4_clean = collapse_and_clean(TRUSTED_MGMT_V4, ipaddress.ip_network)
     trusted_v6_clean = collapse_and_clean(TRUSTED_MGMT_V6, ipaddress.ip_network)
 
-    # Merge DNS-resolved host addresses into the static egress whitelist so
-    # vendor CDN moves do not break strict egress.
     required, optional = load_egress_domains()
-    resolved_v4, failed_v4 = resolve_domains(required + optional, socket.AF_INET)
-    resolved_v6, failed_v6 = resolve_domains(required + optional, socket.AF_INET6)
-    required_failed = [n for n, _ in failed_v4 if n in required]
+
+    if args.check_pin:
+        if not os.path.exists(args.check_pin):
+            print(f"[*] No egress pin at {args.check_pin}; nothing to compare (resolving per host).")
+            return 0
+        pin = load_pin(args.check_pin)
+        drift = check_pin_drift(pin, required, optional)
+        if not drift:
+            print(f"[+] Egress pin is current: {args.check_pin}")
+            return 0
+        # Small, frequent rotation (GitHub/Azure CDN) is normal churn; a large or
+        # suspicious shift deserves a failing unit. Count changed addresses
+        # against the pinned total rather than counting domains.
+        pinned_total = sum(len(v) for v in pin["v4"].values()) + sum(
+            len(v) for v in pin["v6"].values()
+        )
+        changed = 0
+        for line in drift:
+            for token in line.split(":", 1)[1].split():
+                changed += len(token.lstrip("+-").split(","))
+        ratio = (changed / pinned_total) if pinned_total else 1.0
+        print(
+            f"[!] DRIFT: {len(drift)} domain(s) differ from {args.check_pin} "
+            f"({changed}/{pinned_total} addresses, {ratio:.1%})",
+            file=sys.stderr,
+        )
+        for line in drift:
+            print(f"    {line}", file=sys.stderr)
+        if ratio <= args.max_drift_ratio:
+            print(
+                "[*] Within normal CDN rotation tolerance; pin unchanged. "
+                "Re-pin when convenient with --emit-pin.",
+                file=sys.stderr,
+            )
+            return 0
+        print(
+            "[!] Drift exceeds the tolerance: re-pin deliberately with --emit-pin on a "
+            "reviewed host, then redeploy; deploys must not silently adopt new addresses.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.use_pin:
+        pin = load_pin(args.use_pin)
+        resolved_map_v4, resolved_map_v6 = resolve_from_pin(pin, required, optional)
+        resolved_v4 = flatten(resolved_map_v4)
+        resolved_v6 = flatten(resolved_map_v6)
+        failed_v4, failed_v6 = [], []
+        print(
+            f"[*] Egress whitelist from pin: {args.use_pin} "
+            f"({len(resolved_v4)} v4, {len(resolved_v6)} v6)"
+        )
+        required_failed = []
+    else:
+        # Merge DNS-resolved host addresses into the static egress whitelist so
+        # vendor CDN moves do not break strict egress. Per-domain attribution is
+        # only needed to write a pin, so it costs a second pass only there.
+        resolved_v4, failed_v4 = resolve_domains(required + optional, socket.AF_INET)
+        resolved_v6, failed_v6 = resolve_domains(required + optional, socket.AF_INET6)
+        required_failed = [n for n, _ in failed_v4 if n in required]
+        resolved_map_v4 = resolved_map_v6 = None
+        if args.emit_pin:
+            resolved_map_v4, _ = resolve_map(required + optional, socket.AF_INET)
+            resolved_map_v6, _ = resolve_map(required + optional, socket.AF_INET6)
+
     for name in required_failed:
         print(f"[!] WARNING: required egress domain did not resolve: {name}", file=sys.stderr)
     total_required = len(required)
@@ -620,10 +824,26 @@ table inet countersurveillance {{
 
     print(f"[+] Output written to: {OUTPUT_NFT}")
 
+    if args.emit_pin:
+        import hashlib
+
+        if resolved_map_v4 is None or resolved_map_v6 is None:
+            raise ValueError("cannot emit a pin without per-domain resolution")
+        write_pin(
+            args.emit_pin,
+            required,
+            optional,
+            resolved_map_v4,
+            resolved_map_v6,
+            hashlib.sha256(nft_template.encode("utf-8")).hexdigest(),
+        )
+        print(f"[+] Egress pin written to: {args.emit_pin}")
+    return 0
+
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main(sys.argv[1:]) or 0)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"[!] SAFETY ERROR: {exc}", file=sys.stderr)
         sys.exit(2)
