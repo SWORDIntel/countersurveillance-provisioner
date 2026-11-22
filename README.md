@@ -338,18 +338,24 @@ the case that would leave the whitelist pointing at dead infrastructure — and
 reports all other churn as informational. `--strict-drift` opts into failing
 above `--max-drift-ratio` (default 25 %) for operators who want exact sets.
 
-**Re-pin workflow** (`tools/repin.sh` drives it; nothing is written, committed or
-deployed without an explicit flag):
+**Re-pin workflow** — `tools/repin.sh` runs on one node at a time and never
+reaches across the network. Nothing is written, committed or deployed without an
+explicit flag:
 
 ```sh
-tools/repin.sh                          # render a candidate, show the address diff, write nothing
-tools/repin.sh --host t320              # same, but resolve on a dual-stack node (richer AAAA)
-tools/repin.sh --write                  # accept the candidate as configs/egress.pinned.json
-tools/repin.sh --write --commit         # ...and commit the reviewed pin
-tools/repin.sh --write --commit --deploy --hosts "t320 other-node"   # ...and roll it out
+tools/repin.sh                  # review: render a candidate, show the address diff, write nothing
+tools/repin.sh --status         # is this node running the committed pin? (no deploy, no writes)
+tools/repin.sh --write          # accept the candidate (previous kept as .prev)
+tools/repin.sh --write --deploy # ...and apply it to this node
+tools/repin.sh --write --commit # ...and commit the reviewed pin
 ```
 
+Convergence comes from the pin, not from a push: re-pin on one node (prefer a
+dual-stack host so the list carries real AAAA records), commit, `git pull` on the
+others, then run `--status` on each. `--status` renders the committed pin to a
+temp file and compares it with the installed ruleset, so a node can prove it is
+converged without deploying anything.
+
 Review a re-pin like a firewall change: every address in the pin is one the node
-may egress to. `--write` keeps the previous pin at `configs/egress.pinned.json.prev`,
-and a dry run renders the ruleset to a temp path so reviewing never dirties the
-tracked config. Once the pin is committed, every node renders the same ruleset.
+may egress to. A dry run renders the ruleset to a temp path, so reviewing never
+dirties the tracked config.

@@ -79,8 +79,17 @@ class DeploySafeguardTests(unittest.TestCase):
         self.assertIn("COMMIT=0", script)
         self.assertIn("DEPLOY=0", script)
         # Candidate rendering must not mutate the tracked ruleset.
-        self.assertIn('--output "${CANDIDATE}.nft"', script)
+        self.assertIn('--output "$RENDER_TMP"', script)
         self.assertIn("--diff-pin", script)
+
+    def test_repin_is_per_node_and_never_reaches_across_the_network(self):
+        script = (ROOT / "tools" / "repin.sh").read_text()
+        self.assertNotIn("ssh ", script, "re-pin must run locally on each node")
+        self.assertNotIn("scp ", script)
+        self.assertNotIn("--hosts", script)
+        # A node can verify it is running the committed pin without deploying.
+        self.assertIn("--status", script)
+        self.assertIn("CONVERGED", script)
 
 
 if __name__ == "__main__":
