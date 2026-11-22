@@ -14,12 +14,15 @@
 #   tools/repin.sh --write --commit --deploy        # ...and deploy this host
 #   tools/repin.sh --host t320 --write --commit     # pin from a dual-stack node
 #   tools/repin.sh --strict              # fail the drift gate above --max-drift-ratio
+#   tools/repin.sh --host t320 --remote-tool /root/cs-src/tools/update_blacklist.py
+#                                        # pin from a specific checkout on that host
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIN="${SCRIPT_DIR}/configs/egress.pinned.json"
 TOOL="${SCRIPT_DIR}/tools/update_blacklist.py"
 CANONICAL_HOST=""
+REMOTE_TOOL="/opt/countersurveillance/tools/update_blacklist.py"
 WRITE=0
 COMMIT=0
 DEPLOY=0
@@ -35,6 +38,7 @@ usage() {
 while [ $# -gt 0 ]; do
     case "$1" in
         --host)   CANONICAL_HOST="${2:?--host needs a value}"; shift 2 ;;
+        --remote-tool) REMOTE_TOOL="${2:?--remote-tool needs a value}"; shift 2 ;;
         --write)  WRITE=1; shift ;;
         --commit) COMMIT=1; shift ;;
         --deploy) DEPLOY=1; shift ;;
@@ -51,8 +55,13 @@ trap 'rm -f "$CANDIDATE"' EXIT
 
 if [ -n "$CANONICAL_HOST" ]; then
     echo "[*] Rendering candidate pin on ${CANONICAL_HOST}..."
+    if ! ssh "$CANONICAL_HOST" "test -x ${REMOTE_TOOL}"; then
+        echo "[!] ${REMOTE_TOOL} not found on ${CANONICAL_HOST}; deploy there first" >&2
+        echo "    (or pass --remote-tool <path to update_blacklist.py>)" >&2
+        exit 1
+    fi
     REMOTE_TMP="/tmp/egress-pin-candidate.$$.json"
-    ssh "$CANONICAL_HOST" "python3 ${TOOL} --emit-pin ${REMOTE_TMP} --output ${REMOTE_TMP}.nft >/dev/null && cat ${REMOTE_TMP}" > "$CANDIDATE"
+    ssh "$CANONICAL_HOST" "python3 ${REMOTE_TOOL} --emit-pin ${REMOTE_TMP} --output ${REMOTE_TMP}.nft >/dev/null && cat ${REMOTE_TMP}" > "$CANDIDATE"
     ssh "$CANONICAL_HOST" "rm -f ${REMOTE_TMP} ${REMOTE_TMP}.nft" || true
 else
     echo "[*] Rendering candidate pin on this host..."
