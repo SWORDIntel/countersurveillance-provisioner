@@ -1,0 +1,8 @@
+[Unit]
+Description=Loud alert when the countersurveillance perimeter fails to load
+After=countersurveillance-block.service
+# Deliberately not WantedBy: this unit only runs as an OnFailure handler.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nft-guard.py --alert-only --ruleset /etc/nftables.d/countersurveillance.nft

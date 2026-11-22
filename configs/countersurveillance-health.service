@@ -1,0 +1,9 @@
+[Unit]
+Description=Verify the countersurveillance perimeter is still loaded
+After=countersurveillance-block.service
+
+[Service]
+Type=oneshot
+# Detects a table that vanished after boot (manual flush, kernel reload,
+# `nft delete table`, or a competing firewall tool) and re-applies it.
+ExecStart=/usr/local/sbin/nft-guard.py --health --ruleset /etc/nftables.d/countersurveillance.nft

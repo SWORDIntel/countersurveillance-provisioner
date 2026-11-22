@@ -84,11 +84,15 @@ countersurveillance-provisioner/
 ├── provisioner.env.example        # Central configuration template
 ├── configs/
 │   ├── countersurveillance.nft    # Compiled dual-stack nftables ruleset
-│   └── countersurveillance-block.service # Systemd oneshot management unit
+│   ├── countersurveillance-block.service  # Systemd oneshot management unit
+│   ├── countersurveillance-alert.service  # OnFailure → loud perimeter alarm
+│   ├── countersurveillance-health.service # Detects/heals a vanished table
+│   └── countersurveillance-health.timer   # Runs the health check every 5 min
 ├── data/
 │   └── scanner_subnets.json       # Structured scanner target database
 ├── tools/
 │   ├── update_blacklist.py        # Threat intel parser & CIDR collapser
+│   ├── nft_guard.py               # Atomic apply + verify + loud perimeter alerting
 │   └── test_stealth.sh            # Evasion and drop inspection helper
 ├── honeypot/                      # ChronoSink Deception Engine
 │   ├── Dockerfile                 # Minimal multi-stage container (<15MB)
@@ -248,3 +252,36 @@ sudo ./deploy.sh install-refresh
 Installs the suite to `/opt/countersurveillance` and a `countersurveillance-refresh.timer` that regenerates and redeploys the ruleset each day in the node's recorded mode. Every run preflights, arms the rollback watchdog, and auto-reverts on verification failure, so a bad DNS day leaves the live table alone. `/etc/countersurveillance/egress.mode` is mandatory for the unit: if it is missing the unit fails loudly rather than downgrading a strict node to accept.
 
 A post-refresh survival check (`tools/refresh_survival_check.sh`, exit 0/1/2) verifies each node after the morning window: refresh unit verified and the recorded mode re-applied, `/etc/countersurveillance/egress.mode` unchanged, zero fresh legacy `cs-egress-drop` lines, and ulogd2 + the stream alive. Exit 2 means the refresh has not run yet — rerun after ~05:00 GMT. Nodes can run it via the `configs/user/cs-refresh-check.timer` user timer (Mondays 05:30, `Persistent=true`); failures are journalled via `OnFailure=cs-refresh-check-fail.service` → `systemd-cat -t cs-refresh-check`, with no desktop popup.
+
+### 8. Perimeter Guard (fail-loud, self-healing)
+
+A failed `nft -f` loads **no** `countersurveillance` table at all — the unit goes
+red and the host keeps running unfiltered. This is not hypothetical: on
+2026-11-22 a node was found with the perimeter absent since 2026-11-16, because
+one `socket cgroupv2` rule referenced a service that was crash-looping and `nft`
+aborts the whole file.
+
+`tools/nft_guard.py` (installed as `/usr/local/sbin/nft-guard.py`) closes that
+hole. The block unit now runs it instead of calling `nft` directly:
+
+| mode | behavior |
+|------|----------|
+| `--preflight` | `nft -c -f` only; alert + exit 1 on failure |
+| `--apply` | preflight → snapshot live table → load → verify chains/rules → roll back and alert on any failure |
+| `--health` | alert + re-apply when the table is absent or incomplete (used by the timer) |
+| `--alert-only` | `OnFailure=` handler for a failed block unit |
+
+Every failure path is loud on five channels: journal at `daemon.alert`
+(`logger -t cs-perimeter`), `/dev/kmsg`, `wall` to logged-in operators, the
+QIHSE JSONL event file (`QIHSE_EVENTS_FILE`), and an optional webhook
+(`CS_ALERT_WEBHOOK`). Exit status stays non-zero so systemd records the unit as
+failed instead of silently inactive.
+
+`countersurveillance-health.timer` runs `--health` every 5 minutes (and 2 min
+after boot), so a table removed by a manual flush, a kernel reload, or a
+competing firewall tool is detected, alerted, and re-applied automatically.
+
+```bash
+sudo /usr/local/sbin/nft-guard.py --health    # verify + heal
+journalctl -t cs-perimeter -p alert --since -1h
+```

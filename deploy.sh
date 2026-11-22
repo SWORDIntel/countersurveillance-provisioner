@@ -230,7 +230,13 @@ deploy_filter() {
 
     echo "[*] Installing ruleset and restarting service..."
     "${SUDO[@]}" cp "${CONFIG_NFT}" /etc/nftables.d/countersurveillance.nft
+    # Perimeter guard: atomic apply + verification + loud alerting. Installed
+    # before the unit is (re)started, since the unit now execs it.
+    "${SUDO[@]}" install -m 0755 "${SCRIPT_DIR}/tools/nft_guard.py" /usr/local/sbin/nft-guard.py
     "${SUDO[@]}" cp "${SERVICE_FILE}" /etc/systemd/system/countersurveillance-block.service
+    "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/countersurveillance-alert.service" /etc/systemd/system/
+    "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/countersurveillance-health.service" /etc/systemd/system/
+    "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/countersurveillance-health.timer" /etc/systemd/system/
 
     "${SUDO[@]}" systemctl daemon-reload
     "${SUDO[@]}" systemctl enable countersurveillance-block.service
@@ -308,6 +314,8 @@ deploy_refresh_units() {
     "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/countersurveillance-refresh.timer" /etc/systemd/system/
     "${SUDO[@]}" systemctl daemon-reload
     "${SUDO[@]}" systemctl enable --now countersurveillance-refresh.timer
+    # Health timer: detects a perimeter that vanished after boot and alerts.
+    "${SUDO[@]}" systemctl enable --now countersurveillance-health.timer
 
     echo -e "${G}[+] Refresh timer installed (mode: $("${SUDO[@]}" cat /etc/countersurveillance/egress.mode))${NC}"
     systemctl list-timers countersurveillance-refresh.timer --no-pager || true

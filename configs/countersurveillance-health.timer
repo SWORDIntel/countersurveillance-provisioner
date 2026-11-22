@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic countersurveillance perimeter health check
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=countersurveillance-health.service
+
+[Install]
+WantedBy=timers.target

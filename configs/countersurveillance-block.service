@@ -4,12 +4,16 @@ Before=network-pre.target
 Wants=network-pre.target
 After=local-fs.target
 StartLimitIntervalSec=0
+# A failed load used to leave the perimeter silently absent. Now the failure
+# trips an out-of-band alert instead of only colouring the unit red.
+OnFailure=countersurveillance-alert.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/sbin/nft -f /etc/nftables.d/countersurveillance.nft
-ExecReload=/usr/sbin/nft -f /etc/nftables.d/countersurveillance.nft
+ExecStartPre=/usr/local/sbin/nft-guard.py --preflight --ruleset /etc/nftables.d/countersurveillance.nft
+ExecStart=/usr/local/sbin/nft-guard.py --apply --ruleset /etc/nftables.d/countersurveillance.nft
+ExecReload=/usr/local/sbin/nft-guard.py --apply --ruleset /etc/nftables.d/countersurveillance.nft
 ExecStop=-/usr/sbin/nft delete table inet countersurveillance
 
 [Install]
