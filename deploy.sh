@@ -199,6 +199,14 @@ deploy_filter() {
 
     "${SUDO[@]}" mkdir -p /etc/nftables.d
     BACKUP_FILE="/etc/nftables.d/countersurveillance.nft.bak.$(date +%Y%m%d%H%M%S)"
+    # On-disk ruleset backup must exist before the watchdog is forked: the
+    # subshell inherits variables at fork time, so a later assignment would not
+    # be visible to it and the file restore would be skipped.
+    RULESET_FILE="/etc/nftables.d/countersurveillance.nft"
+    RULESET_FILE_BACKUP="${RULESET_FILE}.pre-deploy.$(date +%Y%m%d%H%M%S)"
+    if [ -f "$RULESET_FILE" ]; then
+        "${SUDO[@]}" cp -a "$RULESET_FILE" "$RULESET_FILE_BACKUP" 2>/dev/null || true
+    fi
 
     # Backup existing table if active, or initialize clean rollback target.
     # The dump must start with a table reset: replaying a bare dump onto a live
@@ -215,21 +223,45 @@ deploy_filter() {
     fi
 
     # Arm Rollback Watchdog (detached, immune to SIGHUP, disarm file flag)
+    # 60s was too short: verification on a busy node can exceed it, and a fired
+    # watchdog silently restores the previous ruleset *after* a green run, so the
+    # deploy looks successful while the old policy is live. Default 600s.
+    WATCHDOG_SECS="${CS_WATCHDOG_SECS:-600}"
     WATCHDOG_DISARM="/tmp/cs_watchdog_disarm.$$"
     rm -f "$WATCHDOG_DISARM"
     (
         trap '' HUP
-        sleep 60
+        sleep "$WATCHDOG_SECS"
         if [ ! -f "$WATCHDOG_DISARM" ]; then
+            # Restore both the on-disk ruleset and the live table: restoring
+            # only the table leaves a broken file for the next boot.
+            if [ -f "${RULESET_FILE_BACKUP:-}" ]; then
+                "${SUDO[@]}" cp -a "$RULESET_FILE_BACKUP" "$RULESET_FILE" 2>/dev/null || true
+            fi
             "${SUDO[@]}" nft -f "$BACKUP_FILE" 2>/dev/null || true
-            logger -t cs-watchdog "Rollback watchdog fired after timeout"
+            logger -t cs-watchdog -p daemon.alert \
+                "Rollback watchdog fired after ${WATCHDOG_SECS}s; previous ruleset restored"
         fi
         rm -f "$WATCHDOG_DISARM" "$BACKUP_FILE"
     ) </dev/null >/dev/null 2>&1 &
     WATCHDOG_PID=$!
 
     echo "[*] Installing ruleset and restarting service..."
-    "${SUDO[@]}" cp "${CONFIG_NFT}" /etc/nftables.d/countersurveillance.nft
+    "${SUDO[@]}" cp "${CONFIG_NFT}" "$RULESET_FILE"
+    # Integrity assertion: the file that actually landed must be the file that was
+    # validated. A silent rewrite (stale watchdog, concurrent refresh, editor) is
+    # otherwise invisible once the table reports healthy.
+    SHA_WANT=$(sha256sum "${CONFIG_NFT}" | cut -d' ' -f1)
+    SHA_GOT=$("${SUDO[@]}" sha256sum "$RULESET_FILE" | cut -d' ' -f1)
+    if [ "$SHA_WANT" != "$SHA_GOT" ]; then
+        echo -e "${R}[-] Installed ruleset hash mismatch${NC}"
+        echo "    expected ${SHA_WANT}"
+        echo "    installed ${SHA_GOT}"
+        logger -t cs-deploy -p daemon.alert \
+            "ruleset hash mismatch after install (expected ${SHA_WANT}, got ${SHA_GOT}); aborting"
+        exit 1
+    fi
+    echo "[+] Ruleset installed and hash-verified (sha256 ${SHA_WANT:0:16}…)"
     # Perimeter guard: atomic apply + verification + loud alerting. Installed
     # before the unit is (re)started, since the unit now execs it.
     "${SUDO[@]}" install -m 0755 "${SCRIPT_DIR}/tools/nft_guard.py" /usr/local/sbin/nft-guard.py
@@ -243,7 +275,22 @@ deploy_filter() {
     "${SUDO[@]}" systemctl restart countersurveillance-block.service
 
     echo "[*] Running post-deployment verification..."
+    POST_VERIFY_OK=0
     if bash "${VERIFY_SCRIPT}"; then
+        # Re-assert integrity: a fired watchdog or a concurrent refresh can rewrite
+        # the ruleset while verification runs, leaving a green run over old policy.
+        SHA_NOW=$("${SUDO[@]}" sha256sum "$RULESET_FILE" | cut -d' ' -f1)
+        if [ "$SHA_NOW" = "$SHA_WANT" ]; then
+            POST_VERIFY_OK=1
+        else
+            echo -e "${R}[-] Ruleset changed during deployment${NC}"
+            echo "    expected ${SHA_WANT}"
+            echo "    now      ${SHA_NOW}"
+            logger -t cs-deploy -p daemon.alert \
+                "ruleset hash changed during deploy (${SHA_WANT:0:16} -> ${SHA_NOW:0:16})"
+        fi
+    fi
+    if [ "$POST_VERIFY_OK" = "1" ]; then
         touch "$WATCHDOG_DISARM"
         kill "$WATCHDOG_PID" 2>/dev/null || true
         "${SUDO[@]}" rm -f "$BACKUP_FILE" "$WATCHDOG_DISARM" 2>/dev/null || true
@@ -262,6 +309,10 @@ deploy_filter() {
         echo -e "${R}[-] Verification failed! Reverting ruleset immediately...${NC}"
         touch "$WATCHDOG_DISARM"
         kill "$WATCHDOG_PID" 2>/dev/null || true
+        # Restore the on-disk ruleset as well as the live table.
+        if [ -f "${RULESET_FILE_BACKUP:-}" ]; then
+            "${SUDO[@]}" cp -a "$RULESET_FILE_BACKUP" "$RULESET_FILE" 2>/dev/null || true
+        fi
         if [ -f "${BACKUP_FILE}" ]; then
             "${SUDO[@]}" nft -f "${BACKUP_FILE}" 2>/dev/null || true
             "${SUDO[@]}" rm -f "${BACKUP_FILE}" 2>/dev/null || true
@@ -422,10 +473,13 @@ WATCHDOG_DISARM="/tmp/cs_watchdog_disarm.\$\$"
 rm -f "\${WATCHDOG_DISARM}"
 (
     trap '' HUP
-    sleep 60
+    # Same fuse as the node-side deploy: verification must not outlive it, or a
+    # fired watchdog silently restores the old table after a green run.
+    sleep "\${CS_WATCHDOG_SECS:-600}"
     if [ ! -f "\${WATCHDOG_DISARM}" ]; then
         sudo -n nft -f "\${BACKUP_FILE}" 2>/dev/null || true
-        logger -t cs-watchdog "Rollback watchdog fired after timeout"
+        logger -t cs-watchdog -p daemon.alert \
+            "Remote rollback watchdog fired after \${CS_WATCHDOG_SECS:-600}s"
     fi
     rm -f "\${WATCHDOG_DISARM}" "\${BACKUP_FILE}"
 ) </dev/null >/dev/null 2>&1 &

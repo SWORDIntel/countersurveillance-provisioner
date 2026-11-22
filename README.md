@@ -285,3 +285,25 @@ competing firewall tool is detected, alerted, and re-applied automatically.
 sudo /usr/local/sbin/nft-guard.py --health    # verify + heal
 journalctl -t cs-perimeter -p alert --since -1h
 ```
+
+### 9. Deployment Integrity Guarantees
+
+`deploy.sh` treats a green run as unproven until the bytes on disk are proven to
+be the bytes that were validated:
+
+- **Ruleset hash assertion** — the SHA-256 of `/etc/nftables.d/countersurveillance.nft`
+  is compared against the source file immediately after install, and again after
+  the verification suite passes. A mismatch aborts with an alert instead of
+  reporting success.
+- **File-level rollback** — the previous ruleset file is copied aside
+  (`.pre-deploy.<timestamp>`) *before* the watchdog forks, and both the watchdog
+  and the explicit failure path restore the file as well as the live table.
+  Restoring only the table leaves a broken file for the next boot.
+- **Watchdog fuse** — `CS_WATCHDOG_SECS` (default **600 s**). The previous 60 s
+  fuse could fire *during* verification and silently restore the old policy
+  after a successful deploy, producing a false green. Both the local and the
+  remote-SSH watchdogs honour the same variable, and both log to
+  `daemon.alert`.
+
+Why it matters: the table reporting `chains=8` looks identical whether the new
+policy or the rolled-back one is live. Only the file hash distinguishes them.

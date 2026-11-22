@@ -68,3 +68,5 @@
   - [x] `countersurveillance-health.timer` (5 min) detects and re-applies a perimeter table that vanished after boot
   - [x] Removed the hard `socket cgroupv2` dependency that let one crashed helper abort the entire ruleset load
   - [x] Regression tests (`tests/test_nft_guard.py`) covering preflight failure, load failure, verification rollback, and health self-heal
+  - [x] `deploy.sh`: SHA-256 assertion of the installed ruleset (before and after verification), file-level rollback, and a 600 s `CS_WATCHDOG_SECS` fuse shared by the local and remote-SSH watchdogs
+  - [x] `tests/test_deploy_safeguards.py` pins both regressions: the short fuse and the missing integrity check
