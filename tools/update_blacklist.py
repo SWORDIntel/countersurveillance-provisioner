@@ -284,11 +284,15 @@ def flatten(mapping):
     return sorted({addr for addrs in mapping.values() for addr in addrs})
 
 
-def check_pin_drift(pin, required, optional):
+def check_pin_drift(pin, required, optional, live_v4=None, live_v6=None):
     """Compare the pin against live DNS. Returns a list of human-readable drift lines."""
     drift = []
-    for family, key in ((socket.AF_INET, "v4"), (socket.AF_INET6, "v6")):
-        live, _ = resolve_map(required + optional, family)
+    for family, key, live in (
+        (socket.AF_INET, "v4", live_v4),
+        (socket.AF_INET6, "v6", live_v6),
+    ):
+        if live is None:
+            live, _ = resolve_map(required + optional, family)
         for name in sorted(set(list(live) + list(pin[key]))):
             pinned = set(pin[key].get(name, []))
             current = set(live.get(name, []))
@@ -412,8 +416,14 @@ def main(argv=None):
         "--max-drift-ratio",
         type=float,
         default=0.25,
-        help="with --check-pin, tolerate small CDN rotation below this fraction "
-        "of pinned addresses (default 0.25); larger change exits 1",
+        help="with --strict-drift, fail above this fraction of pinned addresses "
+        "(default 0.25)",
+    )
+    parser.add_argument(
+        "--strict-drift",
+        action="store_true",
+        help="with --check-pin, fail on any address churn; by default only a "
+        "required domain losing every address fails",
     )
     args = parser.parse_args([] if argv is None else argv)
 
@@ -430,13 +440,28 @@ def main(argv=None):
             print(f"[*] No egress pin at {args.check_pin}; nothing to compare (resolving per host).")
             return 0
         pin = load_pin(args.check_pin)
-        drift = check_pin_drift(pin, required, optional)
+        live_v4, _ = resolve_map(required + optional, socket.AF_INET)
+        live_v6, _ = resolve_map(required + optional, socket.AF_INET6)
+        # The dangerous case is a required domain that no longer resolves at all:
+        # the pinned whitelist would then point at hosts that may be gone. Exact
+        # address churn is normal multi-CDN behaviour and differs by host location
+        # (a dual-stack node legitimately sees more AAAA records), so it warns.
+        dead = [
+            name
+            for name in required
+            if not live_v4.get(name) and not live_v6.get(name)
+        ]
+        if dead:
+            print(
+                "[!] FAIL: required egress domain(s) no longer resolve: "
+                + ", ".join(sorted(dead)),
+                file=sys.stderr,
+            )
+            return 1
+        drift = check_pin_drift(pin, required, optional, live_v4, live_v6)
         if not drift:
             print(f"[+] Egress pin is current: {args.check_pin}")
             return 0
-        # Small, frequent rotation (GitHub/Azure CDN) is normal churn; a large or
-        # suspicious shift deserves a failing unit. Count changed addresses
-        # against the pinned total rather than counting domains.
         pinned_total = sum(len(v) for v in pin["v4"].values()) + sum(
             len(v) for v in pin["v6"].values()
         )
@@ -452,19 +477,19 @@ def main(argv=None):
         )
         for line in drift:
             print(f"    {line}", file=sys.stderr)
-        if ratio <= args.max_drift_ratio:
+        if args.strict_drift and ratio > args.max_drift_ratio:
             print(
-                "[*] Within normal CDN rotation tolerance; pin unchanged. "
-                "Re-pin when convenient with --emit-pin.",
+                "[!] Strict drift: exceeds "
+                f"{args.max_drift_ratio:.0%}; re-pin deliberately with --emit-pin.",
                 file=sys.stderr,
             )
-            return 0
+            return 1
         print(
-            "[!] Drift exceeds the tolerance: re-pin deliberately with --emit-pin on a "
-            "reviewed host, then redeploy; deploys must not silently adopt new addresses.",
+            "[*] Informational only: the pin is still authoritative and deploys "
+            "keep rendering it. Re-pin when convenient with --emit-pin.",
             file=sys.stderr,
         )
-        return 1
+        return 0
 
     if args.use_pin:
         pin = load_pin(args.use_pin)

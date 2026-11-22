@@ -328,9 +328,15 @@ and re-pin deliberately. Rendering from a pin is byte-deterministic, so every
 node converges on one reviewed list.
 
 The daily refresh unit gained a drift gate: `--check-pin` runs as
-`ExecStartPre`. Routine CDN rotation below `--max-drift-ratio` (default 25 % of
-pinned addresses) is reported and tolerated; a larger shift fails the unit so
-it shows in `systemctl --failed` instead of being adopted silently.
+`ExecStartPre`. Its default judgement is deliberate, because exact address
+equality is *not* a security property: multi-CDN domains return different
+answers per resolver and per location, and a dual-stack node legitimately sees
+more AAAA records than an IPv4-only one (observed: the same pin drifted 61 % on
+a dual-stack host while both hosts rendered byte-identical rulesets). So by
+default the gate **fails only when a required domain stops resolving entirely** —
+the case that would leave the whitelist pointing at dead infrastructure — and
+reports all other churn as informational. `--strict-drift` opts into failing
+above `--max-drift-ratio` (default 25 %) for operators who want exact sets.
 
 Workflow: re-pin on one reviewed host (`CS_REFRESH_EGRESS=1 ./deploy.sh filter`),
 review the `configs/egress.pinned.json` diff, commit it, then deploy — all nodes
