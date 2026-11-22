@@ -191,6 +191,30 @@ def resolve_domains(names, family):
     return sorted(set(found)), failed
 
 
+def pin_diff(old, new):
+    """Summarize two pins: per-domain address additions/removals per family."""
+    lines = []
+    added_total = removed_total = 0
+    for key in ("v4", "v6"):
+        old_map, new_map = old.get(key, {}), new.get(key, {})
+        for name in sorted(set(old_map) | set(new_map)):
+            before = set(old_map.get(name, []))
+            after = set(new_map.get(name, []))
+            added = sorted(after - before)
+            removed = sorted(before - after)
+            if not added and not removed:
+                continue
+            added_total += len(added)
+            removed_total += len(removed)
+            bits = []
+            if added:
+                bits.append("+" + ",".join(added))
+            if removed:
+                bits.append("-" + ",".join(removed))
+            lines.append(f"{key} {name}: " + " ".join(bits))
+    return lines, added_total, removed_total
+
+
 def load_egress_domains():
     if not os.path.exists(DOMAINS_PATH):
         return [], []
@@ -425,7 +449,30 @@ def main(argv=None):
         help="with --check-pin, fail on any address churn; by default only a "
         "required domain losing every address fails",
     )
+    parser.add_argument(
+        "--diff-pin",
+        nargs=2,
+        metavar=("OLD", "NEW"),
+        help="summarize the address changes between two pins (review step)",
+    )
+    parser.add_argument(
+        "--output",
+        metavar="PATH",
+        default=OUTPUT_NFT,
+        help="ruleset output path (default: the tracked configs/countersurveillance.nft)",
+    )
     args = parser.parse_args([] if argv is None else argv)
+
+    if args.diff_pin:
+        old_path, new_path = args.diff_pin
+        lines, added, removed = pin_diff(load_pin(old_path), load_pin(new_path))
+        if not lines:
+            print(f"[+] Pins are identical: {old_path} == {new_path}")
+            return 0
+        print(f"[*] Pin review: +{added} -{removed} address(es) across {len(lines)} domain/family entr{'y' if len(lines) == 1 else 'ies'}")
+        for line in lines:
+            print(f"    {line}")
+        return 0
 
     raw_blocked_v4, raw_blocked_v6 = load_scoped_targets(JSON_PATH, "ingress")
     outbound_v4, outbound_v6 = load_scoped_targets(OUTBOUND_PATH, "outbound")
@@ -835,19 +882,19 @@ table inet countersurveillance {{
 }}
 """
     # A resolver/schema/write failure must leave the last generated file intact.
-    fd, temporary = tempfile.mkstemp(prefix=".countersurveillance-", dir=os.path.dirname(OUTPUT_NFT))
+    fd, temporary = tempfile.mkstemp(prefix=".countersurveillance-", dir=os.path.dirname(args.output) or ".")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(nft_template)
             f.flush()
             os.fsync(f.fileno())
         os.chmod(temporary, 0o644)
-        os.replace(temporary, OUTPUT_NFT)
+        os.replace(temporary, args.output)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
 
-    print(f"[+] Output written to: {OUTPUT_NFT}")
+    print(f"[+] Output written to: {args.output}")
 
     if args.emit_pin:
         import hashlib

@@ -9,7 +9,8 @@ import re
 import unittest
 from pathlib import Path
 
-DEPLOY = (Path(__file__).resolve().parents[1] / "deploy.sh").read_text()
+ROOT = Path(__file__).resolve().parents[1]
+DEPLOY = (ROOT / "deploy.sh").read_text()
 
 
 class DeploySafeguardTests(unittest.TestCase):
@@ -71,6 +72,15 @@ class DeploySafeguardTests(unittest.TestCase):
         self.assertIn('CS_REFRESH_EGRESS', DEPLOY)
         # Both the local and remote paths must go through the shared helper.
         self.assertEqual(DEPLOY.count("refresh_egress\n"), 2)
+
+    def test_repin_driver_is_dry_by_default(self):
+        script = (ROOT / "tools" / "repin.sh").read_text()
+        self.assertIn("WRITE=0", script)
+        self.assertIn("COMMIT=0", script)
+        self.assertIn("DEPLOY=0", script)
+        # Candidate rendering must not mutate the tracked ruleset.
+        self.assertIn('--output "${CANDIDATE}.nft"', script)
+        self.assertIn("--diff-pin", script)
 
 
 if __name__ == "__main__":

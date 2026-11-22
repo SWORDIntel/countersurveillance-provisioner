@@ -71,4 +71,5 @@
   - [x] `deploy.sh`: SHA-256 assertion of the installed ruleset (before and after verification), file-level rollback, and a 600 s `CS_WATCHDOG_SECS` fuse shared by the local and remote-SSH watchdogs
   - [x] `tests/test_deploy_safeguards.py` pins both regressions: the short fuse and the missing integrity check
   - [x] Reviewed egress pin (`configs/egress.pinned.json`): `--use-pin` renders byte-deterministically without DNS, `--emit-pin` records the reviewed mapping, and `deploy.sh` consumes it so hosts converge on one list (`CS_REFRESH_EGRESS=1` re-pins)
+  - [x] `tools/repin.sh` drives the re-pin workflow (dry review by default, `--write`/`--commit`/`--deploy`/`--hosts`), with `--diff-pin` summarizing address changes and `--output` so review renders cannot dirty the tracked config
   - [x] Drift gate on the daily refresh (`--check-pin`): fails only when a required domain stops resolving; address churn is informational (per-location CDN answers are not a security property), with `--strict-drift` + `--max-drift-ratio` opting into exact-set enforcement

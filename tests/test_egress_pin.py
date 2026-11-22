@@ -86,6 +86,28 @@ class PinTests(unittest.TestCase):
         self.assertIn("-192.0.2.1", joined)
         self.assertNotIn("b.example", joined, "unchanged domains must not report drift")
 
+    def test_pin_diff_reports_added_and_removed(self):
+        old = {"v4": {"a": ["192.0.2.1", "192.0.2.2"]}, "v6": {}}
+        new = {"v4": {"a": ["192.0.2.2", "192.0.2.9"]}, "v6": {}}
+        lines, added, removed = ubl.pin_diff(old, new)
+        self.assertEqual((added, removed), (1, 1))
+        self.assertEqual(len(lines), 1)
+        self.assertIn("+192.0.2.9", lines[0])
+        self.assertIn("-192.0.2.1", lines[0])
+
+    def test_pin_diff_ignores_unchanged_and_new_domains(self):
+        old = {"v4": {"a": ["192.0.2.1"]}, "v6": {}}
+        new = {"v4": {"a": ["192.0.2.1"], "b": ["192.0.2.5"]}, "v6": {}}
+        lines, added, removed = ubl.pin_diff(old, new)
+        self.assertEqual((added, removed), (1, 0))
+        self.assertIn("b", lines[0])
+
+    def test_pin_diff_identical_pins_are_silent(self):
+        pin = {"v4": {"a": ["192.0.2.1"]}, "v6": {"a": ["2001:db8::1"]}}
+        lines, added, removed = ubl.pin_diff(pin, pin)
+        self.assertEqual(lines, [])
+        self.assertEqual((added, removed), (0, 0))
+
 
 if __name__ == "__main__":
     unittest.main()

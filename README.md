@@ -338,6 +338,18 @@ the case that would leave the whitelist pointing at dead infrastructure — and
 reports all other churn as informational. `--strict-drift` opts into failing
 above `--max-drift-ratio` (default 25 %) for operators who want exact sets.
 
-Workflow: re-pin on one reviewed host (`CS_REFRESH_EGRESS=1 ./deploy.sh filter`),
-review the `configs/egress.pinned.json` diff, commit it, then deploy — all nodes
-render the same ruleset.
+**Re-pin workflow** (`tools/repin.sh` drives it; nothing is written, committed or
+deployed without an explicit flag):
+
+```sh
+tools/repin.sh                          # render a candidate, show the address diff, write nothing
+tools/repin.sh --host t320              # same, but resolve on a dual-stack node (richer AAAA)
+tools/repin.sh --write                  # accept the candidate as configs/egress.pinned.json
+tools/repin.sh --write --commit         # ...and commit the reviewed pin
+tools/repin.sh --write --commit --deploy --hosts "t320 other-node"   # ...and roll it out
+```
+
+Review a re-pin like a firewall change: every address in the pin is one the node
+may egress to. `--write` keeps the previous pin at `configs/egress.pinned.json.prev`,
+and a dry run renders the ruleset to a temp path so reviewing never dirties the
+tracked config. Once the pin is committed, every node renders the same ruleset.
