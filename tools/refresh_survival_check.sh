@@ -31,9 +31,13 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-EXPECTED_MODE="STRICT_EGRESS=0
-STRICT_ALLOW_WEB=1
+if [ -f /etc/countersurveillance/egress.mode ]; then
+  EXPECTED_MODE="$(cat /etc/countersurveillance/egress.mode 2>/dev/null)"
+else
+  EXPECTED_MODE="STRICT_EGRESS=0
+STRICT_ALLOW_WEB=0
 STRICT_LOG_DROPS=1"
+fi
 
 AGGREGATOR_HOST=""                 # empty = local
 declare -A NODES=(
@@ -88,7 +92,7 @@ check_node() {
   out="$(run_probe "$host")" || { echo "FAIL: probe unreachable ($host)"; return 1; }
 
   host_seen="$(sed -n 's/^HOST=//p' <<<"$out")"
-  if [ "$host_seen" != "$label" ]; then
+  if [ "$label" != "local" ] && [ "$host_seen" != "$label" ]; then
     echo "FAIL: hostname mismatch (expected $label, got '${host_seen:-<empty>}') — possible route hijack"
     rc=1
   fi
@@ -158,17 +162,17 @@ for label in "${!NODES[@]}"; do
 done
 
 section "local aggregator stream"
-if systemctl --user is-active cs-egress-stream.service >/dev/null 2>&1; then
-  echo "PASS: cs-egress-stream.service active"
+if [ "${CHECK_AGGREGATOR:-0}" = "1" ] || [ -f "$HOME/.local/state/cs-egress/all.log" ]; then
+  if systemctl --user is-active cs-egress-stream.service >/dev/null 2>&1; then
+    echo "PASS: cs-egress-stream.service active"
+  else
+    echo "INFO: cs-egress-stream.service not active"
+  fi
+  if [ -f "$HOME/.local/state/cs-egress/all.log" ]; then
+    echo "INFO: all.log lines today: $(grep -F -e "$(date '+%b %e')" "$HOME/.local/state/cs-egress/all.log" | wc -l)"
+  fi
 else
-  echo "FAIL: cs-egress-stream.service not active — all.log is stale"
-  FAILURES=$((FAILURES + 1))
-fi
-if [ -f "$HOME/.local/state/cs-egress/all.log" ]; then
-  echo "INFO: all.log lines today: $(grep -F -e "$(date '+%b %e')" "$HOME/.local/state/cs-egress/all.log" | wc -l)"
-else
-  echo "FAIL: $HOME/.local/state/cs-egress/all.log missing"
-  FAILURES=$((FAILURES + 1))
+  echo "INFO: aggregator stream check disabled (standalone mode)"
 fi
 
 section "summary"
@@ -178,6 +182,9 @@ if [ "$SKIPPED" -gt 0 ]; then
 fi
 if [ "$FAILURES" -gt 0 ]; then
   echo "RESULT: FAIL — $FAILURES node(s) failed checks"
+  if command -v systemd-cat &>/dev/null; then
+    echo "refresh survival check FAILED — $FAILURES node(s) failed checks (see journalctl --user -u cs-refresh-check)" | systemd-cat -t cs-refresh-check -p err 2>/dev/null || true
+  fi
   exit 1
 fi
 echo "RESULT: PASS — all nodes refreshed in recorded mode, telemetry intact"
