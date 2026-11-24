@@ -246,7 +246,7 @@ class PolicyTests(unittest.TestCase):
         self.assertLess(inp.index(ssh_allow), inp.index("jump ingress_jail_drop"))
         self.assertLess(inp.index(ssh_allow), inp.index("jump ingress_scanner_drop"))
         self.assertIn(
-            "tcp dport { 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006 } counter drop",
+            "tcp dport { 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006, 8096, 8920, 32400 } counter drop",
             inp,
         )
         self.assertNotIn("tcp dport { 22,", inp)
@@ -307,6 +307,39 @@ class PolicyTests(unittest.TestCase):
         inp = chain(text, "input")
         self.assertIn("tcp dport { 9080, 9445 }", inp)
         self.assertLess(inp.index("tcp dport { 9080, 9445 }"), inp.index("jump ingress_jail_drop"))
+
+    def test_media_servers_are_lan_only(self):
+        # Jellyfin (8096/8920) and Plex (32400) bind 0.0.0.0 by default; the
+        # input chain policy is accept, so without an explicit source-scoped
+        # verdict a library lands on the WAN. The verdict must stay
+        # source-scoped: LAN clients (RFC1918 are trusted_mgmt) keep working.
+        text = render(self.directory)
+        inp = chain(text, "input")
+        media = [ln.strip() for ln in inp.splitlines()
+                 if any(p in ln for p in ("8096", "8920", "32400"))
+                 and ln.strip().startswith("ip")]
+        self.assertEqual(len(media), 2, media)  # v4 + v6, both ports in one rule
+        for line in media:
+            self.assertIn("saddr != @trusted_mgmt_v", line)
+            self.assertIn("counter drop", line)
+        # Discovery/DLNA datagrams are L2-local; non-LAN senders are dropped.
+        discovery = [ln.strip() for ln in inp.splitlines()
+                     if ("7359" in ln or "1900" in ln) and ln.strip().startswith("ip")]
+        self.assertEqual(len(discovery), 2, discovery)
+        for line in discovery:
+            self.assertIn("saddr != @trusted_mgmt_v", line)
+        # A media port must never appear in an unrestricted chain.
+        for name in ("output", "forward"):
+            for port in ("8096", "8920", "32400", "7359"):
+                self.assertNotIn(port, chain(text, name))
+
+    def test_media_repos_reachable_under_strict_egress(self):
+        # Package repos and the Plex control plane must stay whitelisted, or a
+        # strict node can never upgrade the media servers it runs.
+        domains = json.loads((ROOT / "data/egress_domains.json").read_text())
+        for domain in ("repo.jellyfin.org", "repo.plex.tv", "downloads.plex.tv",
+                       "plex.tv", "app.plex.tv"):
+            self.assertIn(domain, domains["required"])
 
 
 if __name__ == "__main__":

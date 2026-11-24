@@ -45,57 +45,68 @@ table inet countersurveillance {
         elements = {
             1.0.0.1,
             1.1.1.1,
-            3.216.131.223,
             3.219.24.233,
             3.226.101.191,
             3.233.59.103,
-            3.237.55.85,
             8.8.4.4,
             8.8.8.8,
             9.9.9.9,
-            13.107.213.45,
-            13.107.246.45,
+            13.107.213.65,
+            13.107.246.65,
+            20.26.156.210/31,
+            20.26.156.216,
             20.201.0.0/16,
             20.205.0.0/16,
-            32.194.125.153,
-            32.199.5.18,
+            20.254.76.112,
+            34.238.8.166,
+            44.213.138.104,
             44.214.99.167,
             45.138.55.61,
-            52.7.124.56,
+            52.5.26.215,
+            52.20.61.205,
             52.203.96.197,
+            52.207.163.104,
+            54.144.31.81,
+            54.156.171.78,
+            54.211.250.45,
+            54.235.137.156,
+            68.183.204.194,
+            84.17.50.111,
             89.169.111.62,
-            89.187.169.25,
             91.189.88.0/21,
-            99.86.171.47,
-            99.86.171.66,
-            99.86.171.117,
-            99.86.171.119,
-            100.55.234.118,
+            100.26.133.58,
             104.16.97.215,
             104.16.98.215,
             104.16.99.215,
             104.16.100.215,
             104.16.101.215,
+            104.18.36.51,
+            104.20.28.246,
             140.82.112.0/20,
             144.126.248.239,
             149.112.112.112,
             151.101.0.0/16,
             172.18.0.0/16,
-            184.193.227.167,
+            172.64.151.205,
+            172.66.152.176,
+            172.217.76.91,
+            172.217.76.93,
+            172.217.76.136,
+            172.217.76.190,
+            184.197.53.161,
             184.197.179.235,
-            184.197.245.234,
             185.51.192.61,
             185.51.192.62,
             185.125.188.0/22,
             185.199.108.0/22,
             192.30.252.0/22,
-            192.178.194.91,
-            192.178.194.93,
-            192.178.194.136,
-            192.178.194.190,
             199.232.0.0/16,
             208.67.220.220,
-            208.67.222.222
+            208.67.222.222,
+            216.137.53.37,
+            216.137.53.65,
+            216.137.53.82,
+            216.137.53.120
         }
     }
 
@@ -105,45 +116,45 @@ table inet countersurveillance {
         elements = {
             2001:4860:4860::8844,
             2001:4860:4860::8888,
-            2600:1f18:2148:bc00:94a6:d045:77e1:5e80,
-            2600:1f18:2148:bc00:9532:aa6b:353d:e6c3,
-            2600:1f18:2148:bc00:b63d:60c2:336a:cb24,
-            2600:1f18:2148:bc00:f6a5:a81:92dd:8f,
-            2600:1f18:2148:bc01:74d:11ac:1b54:69a3,
-            2600:1f18:2148:bc01:391a:b2e1:fe77:9da0,
-            2600:1f18:2148:bc02:2ba1:53f4:2fc2:7838,
-            2600:1f18:2148:bc02:550c:fb4b:fde0:d,
-            2600:9000:2081:3e00:1f:2668:fac0:93a1,
-            2600:9000:2081:5a00:1f:2668:fac0:93a1,
-            2600:9000:2081:6e00:1f:2668:fac0:93a1,
-            2600:9000:2081:7400:1f:2668:fac0:93a1,
-            2600:9000:2081:aa00:1f:2668:fac0:93a1,
-            2600:9000:2081:be00:1f:2668:fac0:93a1,
-            2600:9000:2081:d600:1f:2668:fac0:93a1,
-            2600:9000:2081:f800:1f:2668:fac0:93a1,
+            2600:1f18:2148:bc00:6b7d:645:eb08:bb21,
+            2600:1f18:2148:bc00:bdea:75c4:dd49:1c8f,
+            2600:1f18:2148:bc01:5718:409e:8f76:566e,
+            2600:1f18:2148:bc01:baa2:2fbf:656:2050,
+            2600:1f18:2148:bc02:1da:368e:d5e:d700,
+            2600:1f18:2148:bc02:58ad:43d1:e1fd:7c75,
+            2600:1f18:2148:bc02:83ed:319:27fc:162,
+            2600:1f18:2148:bc02:b22a:da3e:2ca:ca73,
+            2600:9000:20fe:0:1f:2668:fac0:93a1,
+            2600:9000:20fe:e00:1f:2668:fac0:93a1,
+            2600:9000:20fe:2a00:1f:2668:fac0:93a1,
+            2600:9000:20fe:4c00:1f:2668:fac0:93a1,
+            2600:9000:20fe:8800:1f:2668:fac0:93a1,
+            2600:9000:20fe:8e00:1f:2668:fac0:93a1,
+            2600:9000:20fe:a000:1f:2668:fac0:93a1,
+            2600:9000:20fe:f200:1f:2668:fac0:93a1,
+            2604:a880:cad:d0::cf3:f001,
             2606:4700::6810:61d7,
             2606:4700::6810:62d7,
             2606:4700::6810:63d7,
             2606:4700::6810:64d7,
             2606:4700::6810:65d7,
+            2606:4700:10::6814:1cf6,
+            2606:4700:10::ac42:98b0,
+            2606:4700:4405::ac40:97cd,
             2606:4700:4700::1001,
             2606:4700:4700::1111,
             2606:50c0:8000::154,
             2606:50c0:8001::154,
             2606:50c0:8002::154,
             2606:50c0:8003::154,
-            2620:2d:4000:1::101,
-            2620:2d:4000:1::102/127,
-            2620:2d:4002:1::101,
-            2620:2d:4002:1::102/127,
             2620:fe::9,
             2620:fe::fe,
-            2620:1ec:46::45,
-            2620:1ec:bdf::45,
-            2a00:1450:4025:1807::5b,
-            2a00:1450:4025:1807::5d,
-            2a00:1450:4025:1807::88,
-            2a00:1450:4025:1807::be,
+            2620:1ec:46::65,
+            2620:1ec:bdf::65,
+            2a00:1450:4009:c17::5b,
+            2a00:1450:4009:c17::5d,
+            2a00:1450:4009:c17::88,
+            2a00:1450:4009:c17::be,
             2a01:b2e0:2::61,
             2a01:b2e0:2::62,
             2a04:4e42::223,
@@ -154,8 +165,7 @@ table inet countersurveillance {
             2a04:4e42:400::644,
             2a04:4e42:600::223,
             2a04:4e42:600::644,
-            2a06:bc80:0:1000::16/127,
-            2a06:bc80:0:1000::18,
+            2a06:98c1:310a::6812:2433,
             2a10:3781:2d18::32
         }
     }
@@ -303,12 +313,14 @@ table inet countersurveillance {
         # F. Management Perimeter Stealth:
         # Require trusted sources for sensitive daemons other than SSH/SFTP:
         # NFS (111, 2049), Spice (3128), RDP (3389), VNC (5900), Corosync,
-        # Agent RPC (7778, 7781), and Proxmox Web (8006).
+        # Agent RPC (7778, 7781), Proxmox Web (8006), and the media servers
+        # (Jellyfin 8096/8920, Plex 32400) whose daemons bind 0.0.0.0 by
+        # default and would otherwise publish the library to the WAN.
         # Proxmox management and cluster traffic stays strictly LAN-only.
-        ip saddr != @trusted_mgmt_v4 tcp dport { 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006 } counter drop
-        ip6 saddr != @trusted_mgmt_v6 tcp dport { 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006 } counter drop
-        ip saddr != @trusted_mgmt_v4 udp dport { 3389, 5404, 5405 } counter drop
-        ip6 saddr != @trusted_mgmt_v6 udp dport { 3389, 5404, 5405 } counter drop
+        ip saddr != @trusted_mgmt_v4 tcp dport { 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006, 8096, 8920, 32400 } counter drop
+        ip6 saddr != @trusted_mgmt_v6 tcp dport { 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006, 8096, 8920, 32400 } counter drop
+        ip saddr != @trusted_mgmt_v4 udp dport { 1900, 3389, 5404, 5405, 7359 } counter drop
+        ip6 saddr != @trusted_mgmt_v6 udp dport { 1900, 3389, 5404, 5405, 7359 } counter drop
 
         # G. ICMP Sweep Normalization: Rate-limit echo requests to 5/s
         ip protocol icmp icmp type echo-request limit rate 5/second accept
@@ -342,7 +354,26 @@ table inet countersurveillance {
         ip6 daddr ff00::/8 accept
 
         # Scanner sets and honeypot jails have NO outbound authority.
-
+        oifname "tailscale0" accept
+        oifname "wg*" accept
+        udp dport 123 counter accept
+        udp dport 53 counter accept
+        tcp dport 53 counter accept
+        tcp dport 25 counter accept
+        udp dport 3478 counter accept
+        tcp dport 3478 counter accept
+        tcp dport 5228 counter accept
+        udp dport { 1025, 41641, 51820, 51821 } counter accept
+        tcp dport 5273 counter accept
+        udp dport { 3389, 5273, 35384-45385 } counter accept
+        udp sport 68 udp dport 67 accept
+        udp sport 67 udp dport 68 accept
+        udp sport 546 udp dport 547 accept
+        meta l4proto ipv6-icmp accept
+        socket cgroupv2 level 2 "system.slice/tailscaled.service" accept
+        socket cgroupv2 level 2 "system.slice/mullvad-daemon.service" accept
+        counter
+        limit rate 600/minute burst 50 packets log prefix "cs-audit-out " group 1
     }
 
     # --------------------------------------------------------------------------
@@ -382,6 +413,24 @@ table inet countersurveillance {
         ip daddr { 224.0.0.0/4, 255.255.255.255 } accept
         ip6 daddr ff00::/8 accept
 
-
+        oifname "tailscale0" accept
+        oifname "wg*" accept
+        udp dport 123 counter accept
+        udp dport 53 counter accept
+        tcp dport 53 counter accept
+        tcp dport 25 counter accept
+        udp dport 3478 counter accept
+        tcp dport 3478 counter accept
+        tcp dport 5228 counter accept
+        udp dport { 1025, 41641, 51820, 51821 } counter accept
+        tcp dport 5273 counter accept
+        udp dport { 3389, 5273, 35384-45385 } counter accept
+        udp sport 68 udp dport 67 accept
+        udp sport 67 udp dport 68 accept
+        udp sport 546 udp dport 547 accept
+        meta l4proto ipv6-icmp accept
+        iifname "parrot0" accept
+        counter
+        limit rate 600/minute burst 50 packets log prefix "cs-audit-fwd " group 1
     }
 }

@@ -20,7 +20,12 @@
     "neuron.jumpdesktop.com",
     "api.jumpdesktop.com",
     "turn.jumpdesktop.com",
-    "jumpdesktop.com"
+    "jumpdesktop.com",
+    "repo.jellyfin.org",
+    "repo.plex.tv",
+    "downloads.plex.tv",
+    "plex.tv",
+    "app.plex.tv"
   ],
   "optional": [
     "archive.ubuntu.com",

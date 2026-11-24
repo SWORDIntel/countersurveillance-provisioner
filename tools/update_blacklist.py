@@ -798,12 +798,14 @@ table inet countersurveillance {{
         # F. Management Perimeter Stealth:
         # Require trusted sources for sensitive daemons other than SSH/SFTP:
         # NFS (111, 2049), Spice (3128), RDP (3389), VNC (5900), Corosync,
-        # Agent RPC (7778, 7781), and Proxmox Web (8006).
+        # Agent RPC (7778, 7781), Proxmox Web (8006), and the media servers
+        # (Jellyfin 8096/8920, Plex 32400) whose daemons bind 0.0.0.0 by
+        # default and would otherwise publish the library to the WAN.
         # Proxmox management and cluster traffic stays strictly LAN-only.
-        ip saddr != @trusted_mgmt_v4 tcp dport {{ 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006 }} counter drop
-        ip6 saddr != @trusted_mgmt_v6 tcp dport {{ 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006 }} counter drop
-        ip saddr != @trusted_mgmt_v4 udp dport {{ 3389, 5404, 5405 }} counter drop
-        ip6 saddr != @trusted_mgmt_v6 udp dport {{ 3389, 5404, 5405 }} counter drop
+        ip saddr != @trusted_mgmt_v4 tcp dport {{ 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006, 8096, 8920, 32400 }} counter drop
+        ip6 saddr != @trusted_mgmt_v6 tcp dport {{ 111, 2049, 3128, 3389, 5900, 7778, 7781, 8006, 8096, 8920, 32400 }} counter drop
+        ip saddr != @trusted_mgmt_v4 udp dport {{ 1900, 3389, 5404, 5405, 7359 }} counter drop
+        ip6 saddr != @trusted_mgmt_v6 udp dport {{ 1900, 3389, 5404, 5405, 7359 }} counter drop
 
         # G. ICMP Sweep Normalization: Rate-limit echo requests to 5/s
         ip protocol icmp icmp type echo-request limit rate 5/second accept
