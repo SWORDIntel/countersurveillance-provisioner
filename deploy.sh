@@ -78,8 +78,16 @@ install_logrotate() {
     # Install from configs/ rather than an inline copy. The two drifted, and only
     # the inline one ever reached a host -- so a fix applied to the committed
     # file changed nothing on any machine.
-    "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/chronosink.logrotate" /etc/logrotate.d/chronosink
     "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/cs-egress-drops.logrotate" /etc/logrotate.d/cs-egress-drops
+
+    # The ChronoSink drop-in belongs only on a host that runs the daemon: its `su`
+    # names an account a policy-only node does not have, and logrotate treats an
+    # unknown user in a drop-in as a parse error and skips every file in it.
+    if "${SUDO[@]}" test -x /opt/chronosink/chronosink; then
+        "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/chronosink.logrotate" /etc/logrotate.d/chronosink
+    else
+        "${SUDO[@]}" rm -f /etc/logrotate.d/chronosink
+    fi
 }
 
 port_80_should_stay_free() {
@@ -176,6 +184,9 @@ EOF
         "${SUDO[@]}" chown chronosink:chronosink /var/log/chronosink/probes.jsonl
         "${SUDO[@]}" chmod 0640 /var/log/chronosink/probes.jsonl
     fi
+    # install_logrotate ran before the binary existed, so it withheld this
+    # drop-in. Install it now that both the daemon and its account are present.
+    "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/chronosink.logrotate" /etc/logrotate.d/chronosink
 
     "${SUDO[@]}" cp "${SCRIPT_DIR}/honeypot/chronosink.service" /etc/systemd/system/chronosink.service
     "${SUDO[@]}" systemctl daemon-reload
