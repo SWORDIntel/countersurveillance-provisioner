@@ -44,12 +44,20 @@ fi
 echo -n "[*] Checking audit-log rules match the recorded mode... "
 MODE_FILE="/etc/countersurveillance/egress.mode"
 if [ -f "$MODE_FILE" ] && grep -qE '^STRICT_LOG_DROPS=1' "$MODE_FILE"; then
-    if "${SUDO[@]}" nft list table inet countersurveillance 2>/dev/null | grep -q 'prefix "cs-audit'; then
-        echo -e "${G}PASS${NC}"
-    else
-        echo -e "${R}FAIL${NC} (STRICT_LOG_DROPS=1 but no cs-audit rules in the table)"
-        exit 1
-    fi
+    # Capture the dump before matching. Piping it into `grep -q` makes grep exit
+    # at the first match, the truncated reader kills nft with SIGPIPE, and
+    # `set -o pipefail` then reports the check as failed even though the rules
+    # are present -- which reverts a good ruleset.
+    AUDIT_DUMP="$("${SUDO[@]}" nft list table inet countersurveillance 2>/dev/null || true)"
+    case "$AUDIT_DUMP" in
+        *'prefix "cs-audit'*)
+            echo -e "${G}PASS${NC}"
+            ;;
+        *)
+            echo -e "${R}FAIL${NC} (STRICT_LOG_DROPS=1 but no cs-audit rules in the table)"
+            exit 1
+            ;;
+    esac
 else
     echo -e "${Y}SKIP${NC} (audit logging not recorded for this node)"
 fi
