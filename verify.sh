@@ -37,6 +37,23 @@ else
     exit 1
 fi
 
+# 2b. Audit Logging Invariant
+# deploy.sh records STRICT_LOG_DROPS=1 unless told otherwise, so the table must
+# carry the cs-audit rules; otherwise the node runs blind while the mode file
+# claims its drops are being logged.
+echo -n "[*] Checking audit-log rules match the recorded mode... "
+MODE_FILE="/etc/countersurveillance/egress.mode"
+if [ -f "$MODE_FILE" ] && grep -qE '^STRICT_LOG_DROPS=1' "$MODE_FILE"; then
+    if "${SUDO[@]}" nft list table inet countersurveillance 2>/dev/null | grep -q 'prefix "cs-audit'; then
+        echo -e "${G}PASS${NC}"
+    else
+        echo -e "${R}FAIL${NC} (STRICT_LOG_DROPS=1 but no cs-audit rules in the table)"
+        exit 1
+    fi
+else
+    echo -e "${Y}SKIP${NC} (audit logging not recorded for this node)"
+fi
+
 # 3. DNS Egress Verification (actual A-record queries, not ICMP reachability)
 echo -n "[*] Testing IPv4 DNS resolution (8.8.8.8, 1.1.1.1, 9.9.9.9)... "
 DNS_OK=0

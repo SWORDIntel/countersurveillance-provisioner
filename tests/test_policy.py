@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import socket
 import tempfile
@@ -49,6 +50,26 @@ def render(directory, ingress=None, outbound=None, strict=False, web=False, logg
 def chain(text, name):
     start = text.index("    chain " + name + " {")
     return text[start:text.index("\n    }", start)]
+
+
+def renderer_without_strict_env(**overrides):
+    """Import a fresh renderer so its module-level env defaults are evaluated
+    from scratch, with STRICT_* cleared unless explicitly overridden."""
+    saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("STRICT_")}
+    os.environ.update(overrides)
+    try:
+        name = "_".join("%s_%s" % (k, v) for k, v in sorted(overrides.items())) or "none"
+        spec = importlib.util.spec_from_file_location(
+            "policy_defaults_" + name,
+            ROOT / "tools/update_blacklist.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for key in [k for k in os.environ if k.startswith("STRICT_")]:
+            os.environ.pop(key)
+        os.environ.update(saved)
 
 
 class PolicyTests(unittest.TestCase):
@@ -340,6 +361,33 @@ class PolicyTests(unittest.TestCase):
         for domain in ("repo.jellyfin.org", "repo.plex.tv", "downloads.plex.tv",
                        "plex.tv", "app.plex.tv"):
             self.assertIn(domain, domains["required"])
+
+    def test_audit_rules_follow_the_logging_flag(self):
+        # The audit block is the only egress observability an accept-policy node
+        # has: it must be present when logging is on, and absent when off.
+        logged = render(self.directory, logging=True)
+        self.assertIn('prefix "cs-audit-out', logged)
+        self.assertIn('prefix "cs-audit-fwd', logged)
+        quiet = render(self.directory, logging=False)
+        self.assertNotIn("cs-audit", quiet)
+
+    def test_audit_logging_is_on_without_any_environment(self):
+        # deploy.sh records STRICT_LOG_DROPS=1 by default while this renderer
+        # used to default it off under accept policy. The two disagreed, so the
+        # deployed table carried no audit rules while the mode file claimed it
+        # was logging. The renderer default must stay on.
+        module = renderer_without_strict_env()
+        self.assertFalse(module.STRICT_EGRESS)
+        self.assertTrue(module.STRICT_LOG_DROPS)
+
+    def test_strict_nodes_log_by_default(self):
+        module = renderer_without_strict_env(STRICT_EGRESS="1")
+        self.assertTrue(module.STRICT_EGRESS)
+        self.assertTrue(module.STRICT_LOG_DROPS)
+
+    def test_audit_logging_can_still_be_disabled(self):
+        module = renderer_without_strict_env(STRICT_LOG_DROPS="0")
+        self.assertFalse(module.STRICT_LOG_DROPS)
 
 
 if __name__ == "__main__":

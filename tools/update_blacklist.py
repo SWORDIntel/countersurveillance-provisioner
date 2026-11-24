@@ -91,9 +91,12 @@ STRICT_EGRESS = os.environ.get("STRICT_EGRESS", "0") == "1"
 # working while every non-web, non-whitelisted destination stays denied.
 STRICT_ALLOW_WEB = os.environ.get("STRICT_ALLOW_WEB", "0") == "1"
 
-# Log what the strict policy actually drops (rate limited), so the egress
-# profile can be observed instead of guessed.
-STRICT_LOG_DROPS = os.environ.get("STRICT_LOG_DROPS", "1" if STRICT_EGRESS else "0") == "1"
+# Log what the policy would drop (rate limited), so the egress profile can be
+# observed instead of guessed. On by default, matching deploy.sh, which records
+# STRICT_LOG_DROPS=1 unless told otherwise: a renderer that defaulted this off
+# under accept policy emitted a table with no cs-audit rules while
+# /etc/countersurveillance/egress.mode claimed logging was enabled.
+STRICT_LOG_DROPS = os.environ.get("STRICT_LOG_DROPS", "1") == "1"
 
 # Daemons whose own traffic is trusted regardless of destination under strict
 # mode: mesh VPN, Tor, the WireGuard VPN daemon, and BitTorrent (peer ports are

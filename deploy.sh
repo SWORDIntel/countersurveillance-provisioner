@@ -188,9 +188,40 @@ EOF
     echo -e "${G}[+] ChronoSink Go daemon deployed and active.${NC}"
 }
 
+EGRESS_MODE_FILE="/etc/countersurveillance/egress.mode"
+
+# Record the node's egress mode. All three keys are always written: a mode file
+# that omits one lets the next reader fall back to a different default, which is
+# how an audit-logging node came to render a ruleset with no audit rules.
+record_egress_mode() {
+    "${SUDO[@]}" mkdir -p /etc/countersurveillance
+    {
+        if [ "${STRICT_EGRESS:-0}" = "1" ]; then echo 'STRICT_EGRESS=1'; else echo 'STRICT_EGRESS=0'; fi
+        if [ "${STRICT_ALLOW_WEB:-0}" = "1" ]; then echo 'STRICT_ALLOW_WEB=1'; else echo 'STRICT_ALLOW_WEB=0'; fi
+        if [ "${STRICT_LOG_DROPS:-1}" = "1" ]; then echo 'STRICT_LOG_DROPS=1'; else echo 'STRICT_LOG_DROPS=0'; fi
+    } | "${SUDO[@]}" tee "$EGRESS_MODE_FILE" >/dev/null
+}
+
+# Re-apply the recorded mode before rendering, so a re-deploy reproduces the
+# policy actually in force. A refresh run carries no STRICT_* environment, and
+# rendering the defaults there would silently downgrade a strict node and drop
+# audit logging. An explicitly exported variable still wins.
+load_egress_mode() {
+    "${SUDO[@]}" test -f "$EGRESS_MODE_FILE" || return 0
+    local key value
+    while IFS='=' read -r key value; do
+        case "$key" in
+            STRICT_EGRESS|STRICT_ALLOW_WEB|STRICT_LOG_DROPS)
+                if [ -z "${!key+x}" ]; then export "$key=$value"; fi
+                ;;
+        esac
+    done < <("${SUDO[@]}" cat "$EGRESS_MODE_FILE")
+}
+
 # Render the ruleset. With a committed egress pin, every host renders the same
 # whitelist; CS_REFRESH_EGRESS=1 re-resolves and re-pins deliberately.
 refresh_egress() {
+    load_egress_mode
     local pin="${CS_EGRESS_PIN:-${SCRIPT_DIR}/configs/egress.pinned.json}"
     if [ "${CS_REFRESH_EGRESS:-0}" = "1" ]; then
         echo "[*] Re-resolving egress whitelist (CS_REFRESH_EGRESS=1) and re-pinning..."
@@ -291,6 +322,10 @@ deploy_filter() {
     "${SUDO[@]}" systemctl daemon-reload
     "${SUDO[@]}" systemctl enable countersurveillance-block.service
     "${SUDO[@]}" systemctl restart countersurveillance-block.service
+    # The timer is what notices a table that did not come back after a reboot or
+    # was flushed by a competing tool. Installing the unit without enabling it
+    # leaves the health check permanently inert.
+    "${SUDO[@]}" systemctl enable --now countersurveillance-health.timer
 
     echo "[*] Running post-deployment verification..."
     POST_VERIFY_OK=0
@@ -315,12 +350,7 @@ deploy_filter() {
 
         # Record the node's egress mode so the refresh timer redeploys with the
         # same policy instead of silently downgrading a strict node to accept.
-        "${SUDO[@]}" mkdir -p /etc/countersurveillance
-        {
-            if [ "${STRICT_EGRESS:-0}" = "1" ]; then echo 'STRICT_EGRESS=1'; else echo 'STRICT_EGRESS=0'; fi
-            if [ "${STRICT_ALLOW_WEB:-0}" = "1" ]; then echo 'STRICT_ALLOW_WEB=1'; else echo 'STRICT_ALLOW_WEB=0'; fi
-            if [ "${STRICT_LOG_DROPS:-1}" = "1" ]; then echo 'STRICT_LOG_DROPS=1'; else echo 'STRICT_LOG_DROPS=0'; fi
-        } | "${SUDO[@]}" tee /etc/countersurveillance/egress.mode >/dev/null
+        record_egress_mode
         echo -e "${G}[+] Deployment verified. Rollback watchdog disarmed.${NC}"
         echo "[+] Egress mode recorded: $("${SUDO[@]}" cat /etc/countersurveillance/egress.mode)"
     else
@@ -366,7 +396,7 @@ deploy_refresh_units() {
                 else
                     echo 'STRICT_ALLOW_WEB=0'
                 fi
-                if "${SUDO[@]}" grep -qE 'log prefix "cs-' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
+                if "${SUDO[@]}" grep -qE 'log prefix "cs-audit' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
                     echo 'STRICT_LOG_DROPS=1'
                 else
                     echo 'STRICT_LOG_DROPS=0'
@@ -374,7 +404,17 @@ deploy_refresh_units() {
             } | "${SUDO[@]}" tee /etc/countersurveillance/egress.mode >/dev/null
             echo "[*] Detected strict egress in the installed ruleset; recording STRICT_EGRESS=1."
         else
-            printf 'STRICT_EGRESS=0\nSTRICT_ALLOW_WEB=0\n' | "${SUDO[@]}" tee /etc/countersurveillance/egress.mode >/dev/null
+            # Derive logging from the audit rules actually present, and always
+            # write all three keys so no reader has to guess a default.
+            {
+                echo 'STRICT_EGRESS=0'
+                echo 'STRICT_ALLOW_WEB=0'
+                if "${SUDO[@]}" grep -qE 'log prefix "cs-audit' /etc/nftables.d/countersurveillance.nft 2>/dev/null; then
+                    echo 'STRICT_LOG_DROPS=1'
+                else
+                    echo 'STRICT_LOG_DROPS=0'
+                fi
+            } | "${SUDO[@]}" tee /etc/countersurveillance/egress.mode >/dev/null
             echo "[*] Installed ruleset uses accept policy; recording STRICT_EGRESS=0."
         fi
     fi
