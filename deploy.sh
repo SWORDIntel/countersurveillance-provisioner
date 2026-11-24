@@ -180,6 +180,18 @@ EOF
         printf 'CHRONOSINK_ACME_PROXY=%s\n' "${CHRONOSINK_ACME_PROXY}" | "${SUDO[@]}" tee -a /etc/chronosink/chronosink.env > /dev/null
     fi
 
+    # The daemon must own its evidence log, so it needs a stable account: a
+    # DynamicUser UID changes every start and can never own a persistent file.
+    if ! getent passwd chronosink >/dev/null; then
+        "${SUDO[@]}" useradd --system --user-group --no-create-home \
+            --shell /usr/sbin/nologin --comment "ChronoSink deception daemon" chronosink
+    fi
+    "${SUDO[@]}" install -d -m 0750 -o chronosink -g chronosink /var/log/chronosink
+    if [ -f /var/log/chronosink/probes.jsonl ]; then
+        "${SUDO[@]}" chown chronosink:chronosink /var/log/chronosink/probes.jsonl
+        "${SUDO[@]}" chmod 0640 /var/log/chronosink/probes.jsonl
+    fi
+
     "${SUDO[@]}" cp "${SCRIPT_DIR}/honeypot/chronosink.service" /etc/systemd/system/chronosink.service
     "${SUDO[@]}" systemctl daemon-reload
     "${SUDO[@]}" systemctl enable --now chronosink.service

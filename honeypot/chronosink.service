@@ -10,7 +10,11 @@ Restart=always
 RestartSec=3
 User=chronosink
 Group=chronosink
-DynamicUser=yes
+# No DynamicUser: a UID that changes every start cannot own a persistent
+# evidence file, and logrotate cannot name an owner for it, so rotation refused
+# the drop-in and the daemon could not append to its own log.
+LogsDirectory=chronosink
+LogsDirectoryMode=0750
 LimitNOFILE=65535
 
 # Configuration files

@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -44,11 +45,11 @@ var (
 	httpPorts        = append([]int(nil), defaultHTTPPorts...)
 	rawPorts         = append([]int(nil), defaultRawPorts...)
 	gzipBomb         []byte
-	hostname        string
-	deceptionMode   = "bounded" // "bounded" (default, harmless) or "bomb" (decompression bomb)
-	httpConnLimiter = make(chan struct{}, 128)
-	rawConnLimiter  = make(chan struct{}, 128)
-	telemetryChan   = make(chan []byte, 1024)
+	hostname         string
+	deceptionMode    = "bounded" // "bounded" (default, harmless) or "bomb" (decompression bomb)
+	httpConnLimiter  = make(chan struct{}, 128)
+	rawConnLimiter   = make(chan struct{}, 128)
+	telemetryChan    = make(chan []byte, 1024)
 )
 
 // EvidenceRecord represents the standardized investigation-grade evidence schema
@@ -222,9 +223,12 @@ func dispatchTelemetry(srcIP string, srcPort int, dstPort int, protocol string, 
 	}
 
 	if b, err := json.Marshal(evidence); err == nil {
-		if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-			_, _ = f.Write(append(b, '\n'))
-			_ = f.Close()
+		if err := appendEvidenceLine(logPath, b); err != nil {
+			// A failed open used to drop the record silently: a root-owned log
+			// file left the daemon writing nothing for weeks with no error.
+			if fallbackErr := appendEvidenceLine(FallbackLogPath, b); fallbackErr != nil {
+				warnEvidenceLoss(logPath, err)
+			}
 		}
 	}
 
@@ -252,6 +256,8 @@ func dispatchTelemetry(srcIP string, srcPort int, dstPort int, protocol string, 
 		if f, err := os.OpenFile(qEventsFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666); err == nil {
 			_, _ = f.Write(append(alertBytes, '\n'))
 			_ = f.Close()
+		} else {
+			warnEvidenceLoss(qEventsFile, err)
 		}
 	}
 
@@ -647,4 +653,29 @@ func main() {
 		_ = l.Close()
 	}
 	fmt.Println("[*] ChronoSink terminated cleanly.")
+}
+
+// appendEvidenceLine appends one JSONL record, creating the file if needed.
+func appendEvidenceLine(path string, record []byte) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write(append(record, '\n'))
+	return err
+}
+
+var lastEvidenceWarn int64
+
+// warnEvidenceLoss reports an unrecoverable write failure to the journal at most
+// once a minute, so a silent evidence gap becomes a visible one without the
+// warning itself flooding the log.
+func warnEvidenceLoss(path string, err error) {
+	now := time.Now().Unix()
+	prev := atomic.LoadInt64(&lastEvidenceWarn)
+	if now-prev < 60 || !atomic.CompareAndSwapInt64(&lastEvidenceWarn, prev, now) {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[!] evidence write to %s failed (%v); record dropped\n", path, err)
 }
