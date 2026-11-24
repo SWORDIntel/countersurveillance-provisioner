@@ -3,9 +3,9 @@
 # parents qualify. Naming the owner is what lets rotation run at all; without it
 # logrotate exits 1 and every other log on the host stops rotating too.
 #
-# The two paths need different owners, so they cannot share one stanza:
-#   - the probe log belongs to the daemon and is rotated as the daemon,
-#   - the QIHSE event spool is root-owned under a path the daemon cannot read.
+# Both sinks are owned by the daemon. On a dataset with aclmode=discard only the
+# owning UID may write or truncate a file, so rotation must run as the daemon --
+# even for the event spool, which QIHSE reads as root but cannot write.
 /var/log/chronosink/*.jsonl {
     su chronosink chronosink
     rotate 7
@@ -17,7 +17,7 @@
 }
 
 /opt/qihse-data/events/*.jsonl {
-    su root root
+    su chronosink chronosink
     rotate 7
     size 50M
     compress
