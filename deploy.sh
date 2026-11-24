@@ -188,6 +188,17 @@ EOF
     # drop-in. Install it now that both the daemon and its account are present.
     "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/chronosink.logrotate" /etc/logrotate.d/chronosink
 
+    # Rotate the QIHSE event spool as whichever account actually owns it. Naming
+    # the wrong one is fatal: logrotate fails with EACCES and skips the whole run,
+    # and on a dataset with aclmode=discard only the owning UID can truncate -- so
+    # a hardcoded owner works on one host and breaks the next.
+    spool_file="/opt/qihse-data/events/countersurveillance_alerts.jsonl"
+    if "${SUDO[@]}" test -f "$spool_file"; then
+        spool_owner="$("${SUDO[@]}" stat -c '%U' "$spool_file")"
+        printf '\n/opt/qihse-data/events/*.jsonl {\n    su %s %s\n    rotate 7\n    size 50M\n    compress\n    copytruncate\n    missingok\n    notifempty\n}\n' \
+            "$spool_owner" "$spool_owner" | "${SUDO[@]}" tee -a /etc/logrotate.d/chronosink >/dev/null
+    fi
+
     "${SUDO[@]}" cp "${SCRIPT_DIR}/honeypot/chronosink.service" /etc/systemd/system/chronosink.service
     "${SUDO[@]}" systemctl daemon-reload
     "${SUDO[@]}" systemctl enable --now chronosink.service
