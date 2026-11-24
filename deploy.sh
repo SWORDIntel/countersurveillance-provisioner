@@ -182,9 +182,9 @@ EOF
 
     # The daemon must own its evidence log, so it needs a stable account: a
     # DynamicUser UID changes every start and can never own a persistent file.
-    # Check /etc/passwd, not `getent passwd`: while a dynamic unit is running,
-    # nss-systemd resolves the same name to a transient UID and would hide the
-    # fact that no static account exists.
+    # Stop the unit first -- while it runs, nss-systemd resolves this name to a
+    # transient UID and useradd refuses the name as taken.
+    "${SUDO[@]}" systemctl stop chronosink.service 2>/dev/null || true
     if ! grep -q '^chronosink:' /etc/passwd; then
         "${SUDO[@]}" useradd --system --user-group --no-create-home \
             --shell /usr/sbin/nologin --comment "ChronoSink deception daemon" chronosink
