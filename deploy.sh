@@ -75,29 +75,11 @@ install_logrotate() {
     echo "[*] Installing logrotate definitions..."
     "${SUDO[@]}" mkdir -p /etc/logrotate.d
 
-    cat <<'EOF' | "${SUDO[@]}" tee /etc/logrotate.d/chronosink >/dev/null
-/var/log/chronosink/*.jsonl /opt/qihse-data/events/*.jsonl {
-    rotate 7
-    size 50M
-    compress
-    copytruncate
-    missingok
-    notifempty
-}
-EOF
-    "${SUDO[@]}" chmod 0644 /etc/logrotate.d/chronosink
-
-    cat <<'EOF' | "${SUDO[@]}" tee /etc/logrotate.d/cs-egress-drops >/dev/null
-/var/log/cs-egress-drops.log {
-    rotate 14
-    size 100M
-    compress
-    copytruncate
-    missingok
-    notifempty
-}
-EOF
-    "${SUDO[@]}" chmod 0644 /etc/logrotate.d/cs-egress-drops
+    # Install from configs/ rather than an inline copy. The two drifted, and only
+    # the inline one ever reached a host -- so a fix applied to the committed
+    # file changed nothing on any machine.
+    "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/chronosink.logrotate" /etc/logrotate.d/chronosink
+    "${SUDO[@]}" install -m 0644 "${SCRIPT_DIR}/configs/cs-egress-drops.logrotate" /etc/logrotate.d/cs-egress-drops
 }
 
 port_80_should_stay_free() {
